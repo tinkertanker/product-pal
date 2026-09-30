@@ -8,6 +8,14 @@ WORKSHOP_CODE=ABCDE
 # Secret. Any OpenAI-compatible Chat Completions API.
 LLM_API_KEY=your-api-key-here
 
+# Optional secret. Key for TypeSafe's Jev model, which checks whether each step
+# is done. Without it the app falls back to a simple length rule.
+# TYPESAFE_API_KEY=your-typesafe-key-here
+
+# Optional secret. Password for the facilitator page at /admin. Without it the
+# admin routes are switched off.
+# ADMIN_PASSWORD=choose-something-long
+
 # These two normally come from wrangler.jsonc "vars"; set them here only to
 # override them locally.
 # LLM_BASE_URL=https://api.deepseek.com

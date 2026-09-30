@@ -3,13 +3,17 @@
 import {
   COACH_STEP_IDS,
   PLATFORMS,
+  STEP_IDS,
   WHY_COUNT,
   emptyCanvas,
+  normaliseJudgements,
   type Canvas,
   type ChatMessage,
   type CoachStepId,
   type Platform,
+  type StepId,
 } from './canvas';
+import { CLARIFICATIONS_PER_STEP, type Clarifications, type JudgeRequest, type SyncRequest } from './contracts';
 
 export const COACH_MODES = ['challenge', 'grill', 'build', 'tune'] as const;
 export type CoachMode = (typeof COACH_MODES)[number];
@@ -30,6 +34,8 @@ export type CoachRequest = {
   step?: CoachStepId;
   canvas: Canvas;
   messages: ChatMessage[];
+  /** The participant's own grill answers per step. Used for build and tune. */
+  clarifications?: Clarifications;
 };
 
 export type ValidationResult = { ok: true; value: CoachRequest } | { ok: false; error: string };
@@ -108,6 +114,34 @@ export function readCanvas(input: unknown): Read<Canvas> {
   return { ok: true, value: canvas };
 }
 
+/** Read the per-step grill answers. Known step ids, lists of text, within limits. Absent means none. */
+export function readClarifications(input: unknown): Read<Clarifications> {
+  if (input === undefined || input === null) return { ok: true, value: {} };
+  if (!isRecord(input)) return { ok: false, error: 'clarifications must be an object.' };
+  const out: Clarifications = {};
+  for (const [key, list] of Object.entries(input)) {
+    if (!(COACH_STEP_IDS as readonly string[]).includes(key)) return { ok: false, error: `clarifications.${key} is not a known step.` };
+    const read = readClarificationList(list, `clarifications.${key}`);
+    if (!read.ok) return read;
+    if (read.value.length > 0) out[key as CoachStepId] = read.value;
+  }
+  return { ok: true, value: out };
+}
+
+/** One step's grill answers. Blank entries are dropped. */
+export function readClarificationList(input: unknown, path: string): Read<string[]> {
+  if (input === undefined || input === null) return { ok: true, value: [] };
+  if (!Array.isArray(input)) return { ok: false, error: `${path} must be a list.` };
+  if (input.length > CLARIFICATIONS_PER_STEP) return { ok: false, error: `${path} has too many answers (limit ${CLARIFICATIONS_PER_STEP}).` };
+  const out: string[] = [];
+  for (const [i, item] of input.entries()) {
+    if (typeof item !== 'string') return { ok: false, error: `${path}[${i}] must be text.` };
+    if (item.length > LIMITS.message) return { ok: false, error: `${path}[${i}] is too long (limit ${LIMITS.message} characters).` };
+    if (item.trim().length > 0) out.push(item);
+  }
+  return { ok: true, value: out };
+}
+
 export function validateCoachRequest(body: unknown): ValidationResult {
   if (!isRecord(body)) return fail('The request must be a JSON object.');
 
@@ -140,6 +174,9 @@ export function validateCoachRequest(body: unknown): ValidationResult {
     }
   }
 
+  const clarifications = readClarifications(body.clarifications);
+  if (!clarifications.ok) return fail(clarifications.error);
+
   if (mode === 'grill' && messages.length > 0 && messages[messages.length - 1]?.role !== 'user') {
     return fail('The last message must be from the participant.');
   }
@@ -147,8 +184,107 @@ export function validateCoachRequest(body: unknown): ValidationResult {
 
   return {
     ok: true,
-    value: { code, clientId, mode: mode as CoachMode, step: validStep, canvas: canvas.value, messages },
+    value: {
+      code,
+      clientId,
+      mode: mode as CoachMode,
+      step: validStep,
+      canvas: canvas.value,
+      messages,
+      clarifications: clarifications.value,
+    },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Judge and sync requests
+// ---------------------------------------------------------------------------
+
+type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function readIdentity(body: Record<string, unknown>): Checked<{ code: string; clientId: string }> {
+  const { code, clientId } = body;
+  if (typeof code !== 'string' || code.length === 0 || code.length > LIMITS.code) return { ok: false, error: 'A workshop code is required.' };
+  if (typeof clientId !== 'string' || clientId.length === 0 || clientId.length > LIMITS.clientId) {
+    return { ok: false, error: 'A client id is required.' };
+  }
+  return { ok: true, value: { code, clientId } };
+}
+
+export function validateJudgeRequest(body: unknown): Checked<JudgeRequest> {
+  if (!isRecord(body)) return { ok: false, error: 'The request must be a JSON object.' };
+  const identity = readIdentity(body);
+  if (!identity.ok) return identity;
+  const { step } = body;
+  if (typeof step !== 'string' || !(COACH_STEP_IDS as readonly string[]).includes(step)) return { ok: false, error: 'Unknown step.' };
+  const canvas = readCanvas(body.canvas);
+  if (!canvas.ok) return canvas;
+  const clarifications = readClarificationList(body.clarifications, 'clarifications');
+  if (!clarifications.ok) return clarifications;
+  return {
+    ok: true,
+    value: { ...identity.value, step: step as CoachStepId, canvas: canvas.value, clarifications: clarifications.value },
+  };
+}
+
+/** The most check rows and characters kept from a judgement that arrives in a sync. */
+const MAX_SYNC_CHECKS = 12;
+const MAX_SYNC_LABEL = 200;
+
+/**
+ * A canvas for syncing: everything readCanvas accepts, plus the chats (known
+ * step ids, within the message limits) and the judgements.
+ */
+export function readSyncCanvas(input: unknown): Read<Canvas> {
+  const base = readCanvas(input);
+  if (!base.ok) return base;
+  const raw = input as Record<string, unknown>;
+  const canvas = base.value;
+
+  if (raw.chats !== undefined) {
+    if (!isRecord(raw.chats)) return { ok: false, error: 'canvas.chats must be an object.' };
+    for (const [id, list] of Object.entries(raw.chats)) {
+      if (!(STEP_IDS as readonly string[]).includes(id)) return { ok: false, error: `canvas.chats.${id} is not a known step.` };
+      if (!Array.isArray(list)) return { ok: false, error: `canvas.chats.${id} must be a list.` };
+      if (list.length > LIMITS.messages) return { ok: false, error: `canvas.chats.${id} has too many messages (limit ${LIMITS.messages}).` };
+      const messages: ChatMessage[] = [];
+      for (const [i, m] of list.entries()) {
+        if (!isRecord(m) || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
+          return { ok: false, error: `canvas.chats.${id}[${i}] must have a role and some text.` };
+        }
+        if (m.content.length > LIMITS.message) {
+          return { ok: false, error: `canvas.chats.${id}[${i}] is too long (limit ${LIMITS.message} characters).` };
+        }
+        messages.push({ role: m.role, content: m.content });
+      }
+      canvas.chats[id as StepId] = messages;
+    }
+  }
+
+  const judgements = normaliseJudgements(raw.judgements);
+  for (const id of COACH_STEP_IDS) {
+    const j = judgements[id];
+    if (!j) continue;
+    j.checks = j.checks.slice(0, MAX_SYNC_CHECKS).map((c) => ({ ...c, id: c.id.slice(0, 60), label: c.label.slice(0, MAX_SYNC_LABEL) }));
+    j.fingerprint = j.fingerprint.slice(0, 32);
+  }
+  canvas.judgements = judgements;
+  return { ok: true, value: canvas };
+}
+
+export function validateSyncRequest(body: unknown): Checked<SyncRequest> {
+  if (!isRecord(body)) return { ok: false, error: 'The request must be a JSON object.' };
+  const identity = readIdentity(body);
+  if (!identity.ok) return identity;
+  const canvas = readSyncCanvas(body.canvas);
+  if (!canvas.ok) return canvas;
+  if (!Array.isArray(body.done)) return { ok: false, error: 'done must be a list of step ids.' };
+  const done: StepId[] = [];
+  for (const id of body.done) {
+    if (typeof id !== 'string' || !(STEP_IDS as readonly string[]).includes(id)) return { ok: false, error: 'done has an unknown step.' };
+    if (!done.includes(id as StepId)) done.push(id as StepId);
+  }
+  return { ok: true, value: { ...identity.value, canvas: canvas.value, done } };
 }
 
 /**

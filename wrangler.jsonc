@@ -15,14 +15,30 @@
     // Optional: "LLM_REASONING_EFFORT": "low"
   },
   // Secrets, set with `npx wrangler secret put <NAME>` (locally: .dev.vars):
-  //   WORKSHOP_CODE, LLM_API_KEY
+  //   WORKSHOP_CODE, LLM_API_KEY, TYPESAFE_API_KEY, ADMIN_PASSWORD
+  // TYPESAFE_API_KEY is optional (without it the AI step checker is off).
+  // ADMIN_PASSWORD is optional (without it the /admin routes answer 503).
+  // D1 holds participant progress and settings. Create the tables before deploying:
+  //   npx wrangler d1 migrations apply product-pal --remote
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "product-pal",
+      "database_id": "b1c48e96-78b9-48b3-b113-88c332c593e6",
+      "migrations_dir": "migrations"
+    }
+  ],
   "ratelimits": [
     // Coach calls per browser (clientId).
     { "name": "COACH_CLIENT_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     // Coach calls per IP. High, because a whole room may share one address.
     { "name": "COACH_IP_LIMITER", "namespace_id": "1002", "simple": { "limit": 200, "period": 60 } },
     // Wrong workshop codes per IP.
-    { "name": "CODE_FAIL_LIMITER", "namespace_id": "1003", "simple": { "limit": 60, "period": 60 } }
+    { "name": "CODE_FAIL_LIMITER", "namespace_id": "1003", "simple": { "limit": 60, "period": 60 } },
+    // Step-checker calls per browser (clientId).
+    { "name": "JUDGE_CLIENT_LIMITER", "namespace_id": "1004", "simple": { "limit": 30, "period": 60 } },
+    // Progress syncs per browser (clientId).
+    { "name": "SYNC_CLIENT_LIMITER", "namespace_id": "1005", "simple": { "limit": 30, "period": 60 } }
   ],
   "observability": { "enabled": true }
 }
