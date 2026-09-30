@@ -3,7 +3,9 @@ import { checkBuildPrompt, checklistSummary, wordCount } from '../shared/checkBu
 import { GRILL_CREDIT_URL, GRILL_PROMPT, GRILL_SKILL_INSTALL } from '../shared/grillPrompt';
 import { getStep } from '../shared/steps';
 import { missingCoachSteps, type Canvas, type Platform } from '../shared/canvas';
+import { agentFileContent, agentFileName } from '../shared/agentFile';
 import { CopyButton } from './CopyButton';
+import { downloadText } from './download';
 import { Hints } from './StepView';
 
 type Props = {
@@ -12,6 +14,10 @@ type Props = {
   writing: boolean;
   onBuild: (patch: Partial<Canvas['build']>) => void;
   onWrite: () => void;
+  /** Write the prompt although some steps are not signed off; the caller asks first. */
+  onWriteAnyway: () => void;
+  /** The AI step checker decides when steps are done. */
+  judge: boolean;
   onTune: () => void;
   onDownload: () => void;
   onGoToStep: (index: number) => void;
@@ -20,13 +26,15 @@ type Props = {
 const PLATFORM_OPTIONS: { value: Platform; label: string }[] = [
   { value: 'claude-code', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
+  { value: 'cursor', label: 'Cursor' },
   { value: 'lovable', label: 'Lovable' },
   { value: 'other', label: 'Other' },
 ];
 
-export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onDownload, onGoToStep }: Props) {
+export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onWriteAnyway, judge, onTune, onDownload, onGoToStep }: Props) {
   const { build } = canvas;
-  const missing = missingCoachSteps(canvas);
+  const missing = missingCoachSteps(canvas, { judge });
+  const agentFile = agentFileName(build.platform);
   const hasPrompt = build.prompt.trim().length > 0;
   const items = useMemo(() => checkBuildPrompt(build.prompt, canvas), [build.prompt, canvas]);
   const summary = checklistSummary(items);
@@ -72,6 +80,11 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
               );
             })}
           </ul>
+          <p className="callout__more">
+            <button type="button" className="link" onClick={onWriteAnyway} disabled={busy}>
+              Write my prompt anyway
+            </button>
+          </p>
         </div>
       )}
 
@@ -108,6 +121,9 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
             Rewrite
           </button>
           <CopyButton text={build.prompt} label="Copy prompt" />
+          <button type="button" className="btn" onClick={() => downloadText(agentFile, agentFileContent(build.prompt))}>
+            Download as {agentFile}
+          </button>
           <button type="button" className="btn" onClick={onDownload}>
             Download canvas (.md)
           </button>
@@ -128,7 +144,7 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
                 {item.pass ? '✓' : '○'}
               </span>
               {item.label}
-              <span className="sr-only">{item.pass ? ' — done' : ' — not yet'}</span>
+              <span className="sr-only">{item.pass ? ' (done)' : ' (not yet)'}</span>
             </li>
           ))}
         </ul>

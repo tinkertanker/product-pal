@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { IDG_CREDIT, IDG_URL, PLAYLIST_URL, embedUrl, type StepDef } from '../shared/steps';
-import { getField, type Canvas } from '../shared/canvas';
+import { getField, type Canvas, type CoachStepId } from '../shared/canvas';
+import type { JudgeView } from '../shared/judgeFlow';
 import { FieldInput } from './FieldInput';
+import { JudgeCard } from './JudgeCard';
 import { STEP_STICKER, Sticker } from './Sticker';
 
 const FOUR_CS = ['clarity', 'consequence', 'cause', 'confirmation'];
@@ -14,9 +16,16 @@ type Props = {
   busy: boolean;
   onChallenge: () => void;
   onGrill: () => void;
+  /** The AI step checker is on for this session. */
+  judgeOn: boolean;
+  /** The length rule is met, so the checker can look at this step. */
+  canCheck: boolean;
+  judgeView: JudgeView;
+  judgeError: string;
+  onCheck: () => void;
 };
 
-export function StepHeader({ step }: { step: StepDef }) {
+export function StepHeader({ step, showTimings }: { step: StepDef; showTimings: boolean }) {
   return (
     <header className="step-head">
       <p className="step-head__num">Step {step.number} of 7</p>
@@ -24,7 +33,7 @@ export function StepHeader({ step }: { step: StepDef }) {
         <h2 id="step-title" tabIndex={-1}>
           {step.title}
         </h2>
-        <span className="chip">{step.minutesLabel} min</span>
+        {showTimings && <span className="chip">{step.minutesLabel} min</span>}
         <Sticker name={STEP_STICKER[step.id]} size={64} eager className="sticker--step" />
       </div>
       <p className="why">
@@ -81,7 +90,7 @@ export function Hints({ step }: { step: StepDef }) {
   );
 }
 
-export function StepView({ step, canvas, onField, canChallenge, busy, onChallenge, onGrill }: Props) {
+export function StepView({ step, canvas, onField, canChallenge, busy, onChallenge, onGrill, judgeOn, canCheck, judgeView, judgeError, onCheck }: Props) {
   const value = (id: string) => getField(canvas, step.id, id);
   const fields = step.fields;
 
@@ -90,6 +99,8 @@ export function StepView({ step, canvas, onField, canChallenge, busy, onChalleng
     if (!field) return null;
     return <FieldInput key={id} stepId={step.id} field={field} value={value(id)} onChange={(v) => onField(id, v)} className={className} />;
   };
+
+  const hint = judgeOn && !canCheck ? 'Finish the boxes above to check your step' : !canChallenge ? 'Write a few words first' : '';
 
   let body;
   if (step.id === 'problem') {
@@ -131,25 +142,38 @@ export function StepView({ step, canvas, onField, canChallenge, busy, onChalleng
       <Hints step={step} />
 
       <div className="actions">
+        {judgeOn && (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={onCheck}
+            disabled={!canCheck || judgeView.kind === 'checking'}
+            aria-describedby={canCheck ? undefined : 'step-hint'}
+          >
+            {judgeView.kind === 'checking' ? 'Checking…' : 'Check my step'}
+          </button>
+        )}
         <button
           type="button"
-          className="btn btn--primary"
+          className={judgeOn ? 'btn' : 'btn btn--primary'}
           onClick={onChallenge}
           disabled={!canChallenge || busy}
           title={canChallenge ? undefined : 'Write a few words first'}
-          aria-describedby={canChallenge ? undefined : 'challenge-hint'}
+          aria-describedby={hint && !canChallenge ? 'step-hint' : undefined}
         >
           Challenge this
         </button>
         <button type="button" className="btn" onClick={onGrill} disabled={busy}>
           Grill me
         </button>
-        {!canChallenge && (
-          <span id="challenge-hint" className="actions__hint">
-            Write a few words first
+        {hint && (
+          <span id="step-hint" className="actions__hint">
+            {hint}
           </span>
         )}
       </div>
+
+      {judgeOn && <JudgeCard view={judgeView} error={judgeError} onCheck={onCheck} stepId={step.id as CoachStepId} />}
     </section>
   );
 }

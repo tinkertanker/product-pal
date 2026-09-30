@@ -1144,3 +1144,448 @@ label {
     display: none;
   }
 }
+
+/* ---------- Header: nickname ---------- */
+
+.brand-block {
+  flex: 1;
+  min-width: 0;
+}
+.brand-block .brand {
+  flex: none;
+}
+.topbar__nick {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  color: var(--ink-soft);
+  padding-left: 36px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.brand__tag {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+/* ---------- Stepper: checker states ---------- */
+
+.rail__item.is-almost .rail__num {
+  border-style: dashed;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.rail__item.is-almost .rail__min {
+  color: var(--accent);
+}
+.rail__item.is-checking .rail__min {
+  font-style: italic;
+}
+.rail__text {
+  min-width: 0;
+}
+
+/* ---------- Step checker card ---------- */
+
+.judge-wrap {
+  display: grid;
+  gap: 10px;
+}
+.judge-wrap .error {
+  margin: 0;
+}
+.judge {
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  min-width: 0;
+}
+.judge--pass {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--highlight) 45%, var(--card));
+}
+.judge--almost {
+  border-left: 4px solid var(--accent);
+}
+.judge--stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--warn-soft);
+  border-color: var(--line);
+}
+.judge__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.judge__headline {
+  margin: 0;
+  font-weight: 600;
+}
+.judge__top + .judge__checks,
+.judge__headline + .judge__checks {
+  margin-top: 0.6rem;
+}
+.judge__thinking {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-soft);
+}
+.judge__checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.judge__checks li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 0.95rem;
+  min-width: 0;
+}
+.judge__checks .checklist__mark {
+  width: 1.2em;
+  flex: none;
+  font-weight: 700;
+}
+.judge__checks .is-pass .checklist__mark {
+  color: var(--accent);
+}
+.judge__checks .is-fail {
+  color: var(--ink-soft);
+}
+.judge__pct {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+.sticker--judge {
+  width: 44px;
+}
+
+.callout__more {
+  margin: 0.6em 0 0;
+  font-size: 0.9rem;
+}
+.link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Facilitator page ---------- */
+
+.code-input--plain {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.admin {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 20px var(--gutter) 48px;
+  display: grid;
+  gap: 18px;
+  flex: 1;
+  align-content: start;
+}
+.admin > .error {
+  margin: 0;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.stat {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  min-width: 0;
+}
+.stat p {
+  margin: 0;
+}
+.stat__value {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  line-height: 1.1;
+}
+.stat__label {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin-top: 2px !important;
+}
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  min-width: 0;
+}
+.panel h2 {
+  font-size: 1.3rem;
+}
+.panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.settings {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.settings .field__help:empty {
+  display: none;
+}
+.check__note {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+.check input:disabled + span {
+  opacity: 0.7;
+}
+.empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.plist ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.prow {
+  font: inherit;
+  width: 100%;
+  text-align: left;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'nick active'
+    'dots prompt';
+  align-items: center;
+  min-width: 0;
+}
+button.prow {
+  cursor: pointer;
+}
+button.prow:hover,
+button.prow.is-selected {
+  border-color: var(--accent);
+}
+.prow--head {
+  display: none;
+}
+.prow__nick {
+  grid-area: nick;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prow__dots {
+  grid-area: dots;
+}
+.prow__prompt {
+  grid-area: prompt;
+  justify-self: end;
+  font-size: 0.85rem;
+}
+.prow__active {
+  grid-area: active;
+  justify-self: end;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.prow__none {
+  color: var(--ink-soft);
+}
+.pill {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0.1em 0.65em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.stepdots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.stepdot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+  background: transparent;
+}
+.stepdot.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+@media (min-width: 720px) {
+  .plist .prow {
+    grid-template-columns: minmax(0, 1.4fr) 130px 120px 100px;
+    grid-template-areas: 'nick dots prompt active';
+    gap: 12px;
+  }
+  .prow--head {
+    display: grid;
+    background: transparent;
+    border-color: transparent;
+    padding-block: 0 4px;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    margin-bottom: 4px;
+  }
+  .prow__prompt {
+    justify-self: start;
+  }
+}
+
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0 0 0 auto;
+  width: min(560px, 100vw);
+  max-width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  background: var(--card);
+  color: var(--ink);
+  overflow: auto;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.25);
+}
+.drawer::backdrop {
+  background: rgba(20, 16, 8, 0.45);
+}
+.drawer__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px var(--gutter);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.drawer__head h2 {
+  font-size: 1.5rem;
+}
+.drawer__head p {
+  margin: 0;
+}
+.drawer__body {
+  display: grid;
+  gap: 20px;
+  padding: 16px var(--gutter) 40px;
+  min-width: 0;
+}
+.drawer__body h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+.drawer__body p {
+  margin: 0;
+}
+.drawer__group {
+  margin-bottom: 10px;
+}
+.drawer__group summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.drawer__group ul {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
+}
+.drawer__group .judge__checks {
+  padding-left: 0;
+}
+.drawer__label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.drawer .error {
+  margin: 12px var(--gutter);
+}
+
+@media (max-width: 520px) {
+  .stat__value {
+    font-size: 1.6rem;
+  }
+  .stat__label {
+    font-size: 0.78rem;
+  }
+  .stat {
+    padding: 10px;
+  }
+}
+
+.btn--nowrap {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 520px) {
+  .brand .brand__tag {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  /* Give the nickname the room the logo mark would take. */
+  .topbar__nick {
+    padding-left: 0;
+  }
+  .topbar__actions .btn--quiet {
+    padding-inline: 0.35em;
+  }
+}

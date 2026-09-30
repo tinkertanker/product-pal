@@ -1,6 +1,8 @@
 // The only file that touches localStorage. Every access is wrapped: storage
 // can be blocked or full, and the app should still work without it.
 
+import { parsePublicSettings } from './api';
+import type { PublicSettings } from './shared/contracts';
 import { emptyCanvas, normaliseCanvas, STEP_IDS, type Canvas, type StepId } from './shared/canvas';
 
 const CODE_KEY = 'pt.code';
@@ -68,3 +70,48 @@ export function loadState(): SavedState {
 
 export const saveState = (state: SavedState): void => write(STATE_KEY, JSON.stringify(state));
 export const clearState = (): void => remove(STATE_KEY);
+
+// ---------------------------------------------------------------------------
+// Facilitator settings, cached so the first paint matches the last visit.
+// ---------------------------------------------------------------------------
+
+const SETTINGS_KEY = 'pt.settings.v1';
+
+export function loadSettings(): PublicSettings | null {
+  const raw = read(SETTINGS_KEY);
+  if (!raw) return null;
+  try {
+    return parsePublicSettings(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+export const saveSettings = (settings: PublicSettings): void => write(SETTINGS_KEY, JSON.stringify(settings));
+
+// ---------------------------------------------------------------------------
+// The facilitator's password lives for this tab only.
+// ---------------------------------------------------------------------------
+
+const ADMIN_KEY = 'pt.admin';
+
+export function loadAdminPassword(): string {
+  try {
+    return sessionStorage.getItem(ADMIN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+export function saveAdminPassword(password: string): void {
+  try {
+    sessionStorage.setItem(ADMIN_KEY, password);
+  } catch {
+    /* carry on: they will be asked again after a reload */
+  }
+}
+export function clearAdminPassword(): void {
+  try {
+    sessionStorage.removeItem(ADMIN_KEY);
+  } catch {
+    /* ignore */
+  }
+}

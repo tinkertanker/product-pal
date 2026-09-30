@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { UnauthorisedError, streamCoach, type CoachBody, type CoachResult } from '../api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { UnauthorisedError, requestJudgement, streamCoach, type CoachBody, type CoachResult } from '../api';
 import {
   canChallenge,
   canvasToMarkdown,
   completedCount,
   emptyCanvas,
+  isStepComplete,
+  missingCoachSteps,
   setField,
   type Canvas,
   type ChatMessage,
   type CoachStepId,
   type StepId,
 } from '../shared/canvas';
+import { clarificationsFrom, nicknameFor, type PublicSettings } from '../shared/contracts';
+import { canCheck, isCoachStep, judgeView, needsAutoCheck } from '../shared/judgeFlow';
 import { grillOpener } from '../shared/prompts';
 import { IDG_CREDIT, IDG_URL, STEPS, getMainField } from '../shared/steps';
 import { canvasForRequest, clampMessages, type CoachMode } from '../shared/validation';
@@ -18,9 +22,11 @@ import { clearState, getClientId, loadState, saveState } from '../storage';
 import { BuildStep } from './BuildStep';
 import { CoachPanel, type PanelMode } from './CoachPanel';
 import { ConfirmDialog, type ConfirmState } from './ConfirmDialog';
+import { downloadText } from './download';
 import { MobileProgress, Stepper } from './Stepper';
 import { Sticker } from './Sticker';
 import { StepHeader, StepView } from './StepView';
+import { useSync } from './useSync';
 
 type Busy = { kind: CoachMode; step: StepId } | null;
 
@@ -34,19 +40,12 @@ const TRUNCATED: Record<CoachMode, string> = {
   tune: CUT_SHORT,
 };
 
-function downloadMarkdown(canvas: Canvas) {
-  const blob = new Blob([canvasToMarkdown(canvas)], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'product-canvas.md';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
+const downloadMarkdown = (canvas: Canvas) => downloadText('product-canvas.md', canvasToMarkdown(canvas));
 
-export function Workspace({ code, onUnauthorised }: { code: string; onUnauthorised: () => void }) {
+const JUDGE_ANYWAY = "Your coach hasn't signed off on every step yet. You can still write your prompt, but it may be vaguer. Go ahead?";
+const LENGTH_ANYWAY = "Some steps aren't filled in yet. You can still write your prompt, but it may be vaguer. Go ahead?";
+
+export function Workspace({ code, settings, onUnauthorised }: { code: string; settings: PublicSettings; onUnauthorised: () => void }) {
   const [initial] = useState(loadState);
   const [canvas, setCanvas] = useState<Canvas>(initial.canvas);
   const [challenges, setChallenges] = useState(initial.challenges);
@@ -60,8 +59,25 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
+  // The step checker runs on its own, so it never waits for the coach's `busy`.
+  const [checking, setChecking] = useState<ReadonlySet<StepId>>(() => new Set());
+  const [judgeErrors, setJudgeErrors] = useState<Partial<Record<StepId, string>>>({});
+  const checksRunning = useRef(new Set<StepId>());
+  const generation = useRef(0);
+  const canvasRef = useRef(canvas);
+  canvasRef.current = canvas;
+
+  const judgeOn = settings.aiJudge && settings.judgeAvailable;
+  const completion = useMemo(() => ({ judge: judgeOn }), [judgeOn]);
+  const nickname = useMemo(() => nicknameFor(getClientId()), []);
+
   const step = STEPS[stepIndex] ?? STEPS[0]!;
-  const done = completedCount(canvas);
+  const done = completedCount(canvas, completion);
+  useSync(
+    code,
+    canvas,
+    STEPS.filter((s) => isStepComplete(canvas, s.id, completion)).map((s) => s.id),
+  );
 
   // Autosave, debounced.
   useEffect(() => {
@@ -117,6 +133,39 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     }
   }
 
+  // ---- Step checker ------------------------------------------------------
+  async function checkStep(id: CoachStepId) {
+    const snapshot = canvasRef.current;
+    if (checksRunning.current.has(id) || !canCheck(snapshot, id)) return;
+    const gen = generation.current;
+    const publish = () => setChecking(new Set(checksRunning.current));
+    checksRunning.current.add(id);
+    publish();
+    setJudgeErrors((e) => ({ ...e, [id]: '' }));
+    try {
+      const judgement = await requestJudgement({
+        code,
+        clientId: getClientId(),
+        step: id,
+        canvas: canvasForRequest(snapshot),
+        clarifications: clarificationsFrom(snapshot.chats)[id],
+      });
+      if (gen === generation.current) update((c) => ({ ...c, judgements: { ...c.judgements, [id]: judgement } }));
+    } catch (e) {
+      if (e instanceof UnauthorisedError) onUnauthorised();
+      else if (gen === generation.current) setJudgeErrors((all) => ({ ...all, [id]: e instanceof Error ? e.message : "The step checker couldn't answer just now. Please try again in a moment." }));
+    } finally {
+      checksRunning.current.delete(id);
+      publish();
+    }
+  }
+
+  /** Next never waits: if this step hasn't been checked yet, the check runs in the background. */
+  function next() {
+    if (isCoachStep(step.id) && needsAutoCheck(canvas, step.id, completion, checksRunning.current.has(step.id))) void checkStep(step.id);
+    goTo(stepIndex + 1);
+  }
+
   // ---- Challenge ---------------------------------------------------------
   async function challenge() {
     const id = step.id as CoachStepId;
@@ -170,17 +219,26 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
   }
 
   // ---- Build and tune ----------------------------------------------------
-  async function writePrompt() {
+  async function writePrompt(anyway = false) {
     if (busy) return;
+    const unfinished = missingCoachSteps(canvas, completion).length > 0;
     const write = async () => {
       const previous = canvas.build.prompt;
       setPanelModes((p) => ({ ...p, build: undefined }));
       update((c) => ({ ...c, build: { ...c.build, prompt: '' } }));
-      const result = await run('build', 'build', { canvas: canvasForRequest(canvas) }, (t) => update((c) => ({ ...c, build: { ...c.build, prompt: t } })));
+      const result = await run('build', 'build', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, (t) => update((c) => ({ ...c, build: { ...c.build, prompt: t } })));
       // On failure, put back the prompt they had, edits included.
       if (result === null || result.text.trim() === '') update((c) => ({ ...c, build: { ...c.build, prompt: previous } }));
     };
-    if (canvas.build.prompt.trim()) {
+    const replaceNote = canvas.build.prompt.trim() ? ' This will replace the prompt you have now, including any edits you have made.' : '';
+    if (anyway && unfinished) {
+      setConfirm({
+        title: 'Write your prompt anyway?',
+        message: (judgeOn ? JUDGE_ANYWAY : LENGTH_ANYWAY).replace(' Go ahead?', `${replaceNote} Go ahead?`),
+        confirmLabel: 'Yes, write it',
+        onConfirm: () => void write(),
+      });
+    } else if (canvas.build.prompt.trim()) {
       setConfirm({
         title: 'Replace your build prompt?',
         message: "A new prompt will replace the one you have now, including any edits you've made.",
@@ -196,7 +254,7 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     if (busy) return;
     setPanel('build', 'tune');
     setTune('');
-    const result = await run('tune', 'build', { canvas: canvasForRequest(canvas) }, setTune);
+    const result = await run('tune', 'build', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, setTune);
     if (result === null) setTune('');
   }
 
@@ -209,6 +267,10 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
       onConfirm: () => {
         abortRef.current?.abort();
         setBusy(null);
+        generation.current += 1;
+        checksRunning.current.clear();
+        setChecking(new Set());
+        setJudgeErrors({});
         clearState();
         setCanvas(emptyCanvas());
         setChallenges({});
@@ -240,10 +302,13 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     <div className="app">
       <header className="topbar">
         <div className="topbar__inner">
-          <p className="brand">
-            <Sticker name="face" size={28} eager className="sticker--brand" />
-            Product Pal
-          </p>
+          <div className="brand-block">
+            <p className="brand">
+              <Sticker name="face" size={28} eager className="sticker--brand" />
+              Product Pal
+            </p>
+            <p className="topbar__nick">You're {nickname}</p>
+          </div>
           <div className="topbar__status">
             <p className="topbar__progress" aria-label={`${done} of 7 steps complete`}>
               {done} of 7
@@ -259,15 +324,15 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
             </button>
           </div>
         </div>
-        <MobileProgress canvas={canvas} current={stepIndex} onSelect={goTo} />
+        <MobileProgress canvas={canvas} current={stepIndex} onSelect={goTo} mode={completion} showTimings={settings.showTimings} checking={checking} />
       </header>
 
       <div className="layout">
-        <Stepper canvas={canvas} current={stepIndex} onSelect={goTo} />
+        <Stepper canvas={canvas} current={stepIndex} onSelect={goTo} mode={completion} showTimings={settings.showTimings} checking={checking} />
 
         <main className="main" ref={mainRef} tabIndex={-1} id="main">
           <div className="main__content">
-            <StepHeader step={step} />
+            <StepHeader step={step} showTimings={settings.showTimings} />
             {step.id === 'build' ? (
               <BuildStep
                 canvas={canvas}
@@ -275,6 +340,8 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
                 writing={busy?.kind === 'build'}
                 onBuild={(patch) => update((c) => ({ ...c, build: { ...c.build, ...patch } }))}
                 onWrite={() => void writePrompt()}
+                onWriteAnyway={() => void writePrompt(true)}
+                judge={judgeOn}
                 onTune={() => void tunePrompt()}
                 onDownload={() => downloadMarkdown(canvas)}
                 onGoToStep={goTo}
@@ -288,6 +355,11 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
                 busy={busy !== null}
                 onChallenge={() => void challenge()}
                 onGrill={grill}
+                judgeOn={judgeOn}
+                canCheck={canCheck(canvas, step.id)}
+                judgeView={judgeView(canvas, step.id, checking.has(step.id))}
+                judgeError={judgeErrors[step.id] ?? ''}
+                onCheck={() => void checkStep(step.id as CoachStepId)}
               />
             )}
           </div>
@@ -319,7 +391,7 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
               ← Previous
             </button>
             {stepIndex < STEPS.length - 1 && (
-              <button type="button" className="btn btn--primary" onClick={() => goTo(stepIndex + 1)}>
+              <button type="button" className="btn btn--primary" onClick={next}>
                 Next →
               </button>
             )}

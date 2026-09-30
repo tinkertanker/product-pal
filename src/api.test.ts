@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { streamCoach, type CoachBody } from './api';
+import { parsePublicSettings, requestJudgement, streamCoach, UnauthorisedError, type CoachBody } from './api';
 import { endMarker } from './shared/coachStream';
 import { emptyCanvas } from './shared/canvas';
 
@@ -53,5 +53,40 @@ describe('streamCoach', () => {
   it('throws the server message for an error status', async () => {
     const { result } = await run(Response.json({ error: 'Sorry, the coach could not answer just now.' }, { status: 502 }));
     await expect(result).rejects.toThrow('could not answer');
+  });
+});
+
+describe('parsePublicSettings', () => {
+  it('accepts a complete settings object and drops anything extra', () => {
+    expect(parsePublicSettings({ showTimings: true, aiJudge: false, judgeAvailable: true, extra: 1 })).toEqual({ showTimings: true, aiJudge: false, judgeAvailable: true });
+  });
+  it('rejects anything incomplete or of the wrong type', () => {
+    expect(parsePublicSettings(null)).toBeNull();
+    expect(parsePublicSettings('x')).toBeNull();
+    expect(parsePublicSettings({ showTimings: true, aiJudge: 'yes', judgeAvailable: true })).toBeNull();
+    expect(parsePublicSettings({ showTimings: true, aiJudge: true })).toBeNull();
+  });
+});
+
+describe('requestJudgement', () => {
+  const request = { code: 'M82T7', clientId: 'c', step: 'idea', canvas: emptyCanvas() } as const;
+  const reply = (status: number, json: unknown) => vi.stubGlobal('fetch', async () => new Response(JSON.stringify(json), { status }));
+  const judgement = { step: 'idea', pass: true, checks: [], fingerprint: 'abc', at: 1 };
+
+  it('returns the judgement', async () => {
+    reply(200, judgement);
+    await expect(requestJudgement(request)).resolves.toEqual(judgement);
+  });
+  it('raises UnauthorisedError on 401', async () => {
+    reply(401, { error: 'no' });
+    await expect(requestJudgement(request)).rejects.toBeInstanceOf(UnauthorisedError);
+  });
+  it("shows the server's message on other errors", async () => {
+    reply(502, { error: 'The step checker is resting.' });
+    await expect(requestJudgement(request)).rejects.toThrow('The step checker is resting.');
+  });
+  it('rejects a reply that is not a judgement', async () => {
+    reply(200, { nope: true });
+    await expect(requestJudgement(request)).rejects.toThrow(/couldn't answer/);
   });
 });

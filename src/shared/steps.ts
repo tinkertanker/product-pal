@@ -53,8 +53,8 @@ export const STEPS: StepDef[] = [
     number: 1,
     title: 'Your idea',
     shortTitle: 'idea',
-    minutes: 3,
-    minutesLabel: '3',
+    minutes: 5,
+    minutesLabel: '5',
     videoId: 'DqGP6BvyRdk',
     whyItMatters:
       "Before we talk about what to build, let's get clear on who you're helping. Lots of good ideas fall over because they fix something nobody was really struggling with. So start with a person, and what's hard for them today.",
@@ -87,8 +87,8 @@ export const STEPS: StepDef[] = [
     number: 2,
     title: 'Start with the why',
     shortTitle: 'why',
-    minutes: 7,
-    minutesLabel: '7',
+    minutes: 10,
+    minutesLabel: '10',
     videoId: 'wdzcM6ax5YY',
     whyItMatters:
       "When someone asks for 'a chatbot', they've already jumped to an answer. If you keep asking 'why?', you'll usually find the real need a few layers down. Here's a handy check: if your idea only makes sense because it uses AI, we haven't found the why yet.",
@@ -114,8 +114,8 @@ export const STEPS: StepDef[] = [
     number: 3,
     title: 'Problem statement',
     shortTitle: 'problem statement',
-    minutes: 8,
-    minutesLabel: '8',
+    minutes: 12,
+    minutesLabel: '12',
     videoId: 'aBSAouM7iaE',
     whyItMatters:
       "A good problem statement means everyone on your team is working on the same problem. The 4Cs below help you build one, a piece at a time. Hold off on solutions for now. You'll get to them soon, I promise.",
@@ -166,8 +166,8 @@ export const STEPS: StepDef[] = [
     number: 4,
     title: 'Useful metric',
     shortTitle: 'metric',
-    minutes: 6,
-    minutesLabel: '6',
+    minutes: 8,
+    minutesLabel: '8',
     videoId: 'Rtb_tlSzTJ0',
     whyItMatters:
       "How will you know if this actually helped? Pick one number that would change if your user's day got better. Counting how often people use your thing won't tell you that on its own.",
@@ -208,8 +208,8 @@ export const STEPS: StepDef[] = [
     number: 5,
     title: 'Riskiest assumption',
     shortTitle: 'riskiest assumption',
-    minutes: 6,
-    minutesLabel: '6',
+    minutes: 8,
+    minutesLabel: '8',
     videoId: '_iZNhzdLd7A',
     whyItMatters:
       "Every idea quietly depends on a few things being true. Let's find the one that would sink your idea if it turned out to be wrong, and think of a cheap way to check it before you spend hours building.",
@@ -224,8 +224,8 @@ export const STEPS: StepDef[] = [
       { id: 'riskiest', label: 'The riskiest one', multiline: true, required: true, main: true },
       {
         id: 'test',
-        label: 'The cheapest test you could run this week, without writing any code',
-        placeholder: 'Interviews, a spreadsheet, a paper mock-up, running it by hand',
+        label: 'The quickest test you could run in the next 30 minutes, without writing any code',
+        placeholder: 'Ask three people nearby, try it by hand, sketch it on paper, check with a mentor',
         multiline: true,
         required: true,
       },
@@ -242,7 +242,7 @@ export const STEPS: StepDef[] = [
       body: "Singapore's health appointment booking system started life as a FormSG form feeding into a spreadsheet. It would never have scaled, but it showed that people really would book: 24 bookings from the group who were offered it, and none from the group who weren't.",
     },
     shapeItLike:
-      "The belief that would sink the idea, a test you could run this week, and the result you'd count as a pass.",
+      "The belief that would sink the idea, a test you could run in the next half hour, and the result you'd count as a pass.",
     avoid:
       "'We'll find out once it's built.' That's the slowest and most expensive way to find out, and in a hackathon you don't have the time.",
   },
@@ -251,8 +251,8 @@ export const STEPS: StepDef[] = [
     number: 6,
     title: 'Customer experience',
     shortTitle: 'customer experience',
-    minutes: 6,
-    minutesLabel: '6',
+    minutes: 8,
+    minutesLabel: '8',
     videoId: 'wMe7WgWzIe8',
     whyItMatters:
       "People stick with things that fit into their day. So rather than drawing a screen, walk through the moment from your user's side, including the bits where things go wrong.",
@@ -294,8 +294,8 @@ export const STEPS: StepDef[] = [
     number: 7,
     title: 'Build prompt',
     shortTitle: 'build prompt',
-    minutes: 5,
-    minutesLabel: '5+',
+    minutes: 10,
+    minutesLabel: '10+',
     videoId: 'sI5veUTIzkk',
     whyItMatters:
       "Well done for getting this far. Now you get to decide what to build! Turn your canvas into a prompt for your coding tool, then keep tuning it until someone who has never met you could build from it.",
@@ -318,4 +318,10 @@ export function getMainField(id: StepId): FieldDef | undefined {
 
 export function totalMinutes(): number {
   return STEPS.reduce((sum, s) => sum + s.minutes, 0);
+}
+
+/** A rough, friendly length for the whole activity, e.g. "about an hour". */
+export function approxDuration(minutes: number): string {
+  const rounded = Math.round(minutes / 5) * 5;
+  return rounded >= 55 && rounded <= 65 ? 'about an hour' : `about ${rounded} minutes`;
 }
