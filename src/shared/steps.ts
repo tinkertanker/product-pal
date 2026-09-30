@@ -57,7 +57,7 @@ export const STEPS: StepDef[] = [
     minutesLabel: '3',
     videoId: 'DqGP6BvyRdk',
     whyItMatters:
-      'Most ideas that fail solve a problem nobody had. Start by writing down who is hurting and how — not what you want to build.',
+      "Before we talk about what to build, let's get clear on who you're helping. Lots of good ideas fall over because they fix something nobody was really struggling with. So start with a person, and what's hard for them today.",
     fields: [
       {
         id: 'who',
@@ -77,8 +77,10 @@ export const STEPS: StepDef[] = [
         main: true,
       },
     ],
-    shapeItLike: 'One sentence about a need that keeps coming back, in plain words.',
-    avoid: "Naming the technology ('a chatbot', 'an AI agent') instead of the job it does.",
+    shapeItLike:
+      'Try one plain sentence about a need that keeps coming up for this person. Imagine explaining it to a colleague over lunch.',
+    avoid:
+      "Try not to name the technology yet. 'A chatbot' or 'an AI agent' describes how, and we don't know the how yet. Describe the job it would do instead.",
   },
   {
     id: 'why',
@@ -89,7 +91,7 @@ export const STEPS: StepDef[] = [
     minutesLabel: '7',
     videoId: 'wdzcM6ax5YY',
     whyItMatters:
-      "A request like 'build us a chatbot' is a solution. Ask 'why?' until you reach the need underneath it. If the idea only makes sense because it uses AI, there is no why.",
+      "When someone asks for 'a chatbot', they've already jumped to an answer. If you keep asking 'why?', you'll usually find the real need a few layers down. Here's a handy check: if your idea only makes sense because it uses AI, we haven't found the why yet.",
     fields: [
       ...whyFields,
       {
@@ -101,9 +103,11 @@ export const STEPS: StepDef[] = [
         main: true,
       },
     ],
-    hint: 'Stop when you reach a cause you can actually do something about.',
-    shapeItLike: '[Named user] needs [outcome]; if nothing changes, [consequence].',
-    avoid: "A why that is a feature request in disguise. Test it: delete the word 'AI'. Does it still make sense?",
+    hint: "You can stop when you reach a cause that you or your team could actually do something about. Three whys is fine if that's where it lands.",
+    shapeItLike:
+      "Name the person, what they need, and what happens if nothing changes. For example: 'New night nurses need an accurate handover; if nothing changes, patients miss their medication.'",
+    avoid:
+      "Watch for a feature request dressed up as a why. A quick test is to cross out the word 'AI'. If the sentence still makes sense, you're on the right track.",
   },
   {
     id: 'problem',
@@ -113,33 +117,34 @@ export const STEPS: StepDef[] = [
     minutes: 8,
     minutesLabel: '8',
     videoId: 'aBSAouM7iaE',
-    whyItMatters: 'A clear problem statement keeps everyone on the same problem. Use the 4Cs. No solutions allowed yet.',
+    whyItMatters:
+      "A good problem statement means everyone on your team is working on the same problem. The 4Cs below help you build one, a piece at a time. Hold off on solutions for now. You'll get to them soon, I promise.",
     fields: [
       {
         id: 'clarity',
         label: 'Clarity',
-        helper: 'Who is affected? What are they trying to do? What is broken, and how badly?',
+        helper: "Who is affected? What are they trying to do? What's getting in the way, and how badly?",
         multiline: true,
         required: true,
       },
       {
         id: 'consequence',
         label: 'Consequence',
-        helper: "What happens if nobody fixes this? If the answer is 'not much', it may not be worth solving.",
+        helper: "What happens if nobody fixes this? If the honest answer is 'not much', that's worth knowing now.",
         multiline: true,
         required: true,
       },
       {
         id: 'cause',
         label: 'Cause',
-        helper: 'Why does the problem exist? Link back to your five whys.',
+        helper: 'Why does the problem exist? Your five whys from the last step should help here.',
         multiline: true,
         required: true,
       },
       {
         id: 'confirmation',
         label: 'Confirmation',
-        helper: 'What evidence shows it is real? A number, an observation, a quote.',
+        helper: "How do you know it's real? A number, something you've seen, or something someone told you all count.",
         multiline: true,
         required: true,
       },
@@ -152,8 +157,9 @@ export const STEPS: StepDef[] = [
         main: true,
       },
     ],
-    shapeItLike: 'One user, one moment, one pain — backed by evidence.',
-    avoid: "A statement that already contains the fix. If it names an app, a tool or AI, it's a proposal, not a problem.",
+    shapeItLike: 'Aim for one person, one moment and one pain, with a bit of evidence to back it up.',
+    avoid:
+      "If your statement mentions an app, a tool or AI, there's a solution hiding inside it. Take that part out and see what's left.",
   },
   {
     id: 'metric',
@@ -163,7 +169,8 @@ export const STEPS: StepDef[] = [
     minutes: 6,
     minutesLabel: '6',
     videoId: 'Rtb_tlSzTJ0',
-    whyItMatters: "You need one number that shows the user's life got better. Usage counts don't do that.",
+    whyItMatters:
+      "How will you know if this actually helped? Pick one number that would change if your user's day got better. Counting how often people use your thing won't tell you that on its own.",
     fields: [
       {
         id: 'primary',
@@ -175,25 +182,26 @@ export const STEPS: StepDef[] = [
       },
       {
         id: 'baseline',
-        label: "Today's value (a rough guess is fine — say how you'd check it)",
+        label: "What is it today? A rough guess is fine; just note how you'd check it.",
         multiline: true,
         required: true,
       },
       { id: 'target', label: 'What would count as success, and by when?', multiline: true, required: true },
       {
         id: 'guardrail',
-        label: 'Guardrail — what must not get worse?',
+        label: "Guardrail: what mustn't get worse?",
         placeholder: 'e.g. error rate, cost, staff trust',
         multiline: false,
         required: true,
       },
     ],
     callout: {
-      title: 'Vanity metrics to avoid',
-      body: "Logins, prompts sent, reports generated, seats deployed, page views. Leading indicators tell you early; lagging indicators prove the outcome. Aim for the outcome.",
+      title: 'Watch out for vanity metrics',
+      body: "Logins, prompts sent, reports generated, seats and page views can all go up while nobody is better off. It's fine to watch an early signal, such as how many people try it, but make your main number the outcome you really care about.",
     },
-    shapeItLike: 'One outcome metric, today\'s baseline, a target and a guardrail.',
-    avoid: "Counting activity. If the metric goes up while nobody's life improves, it's a vanity metric.",
+    shapeItLike:
+      "One outcome number, what it is today, what you're hoping it becomes, and one thing you'll keep an eye on so it doesn't get worse.",
+    avoid: "Counting activity. Ask yourself: could this number go up while nobody's life improves? If so, pick another.",
   },
   {
     id: 'assumption',
@@ -204,7 +212,7 @@ export const STEPS: StepDef[] = [
     minutesLabel: '6',
     videoId: '_iZNhzdLd7A',
     whyItMatters:
-      'Every idea rests on beliefs that might be false. Find the one that would kill the idea, and test it cheaply before you build.',
+      "Every idea quietly depends on a few things being true. Let's find the one that would sink your idea if it turned out to be wrong, and think of a cheap way to check it before you spend hours building.",
     fields: [
       {
         id: 'list',
@@ -216,26 +224,27 @@ export const STEPS: StepDef[] = [
       { id: 'riskiest', label: 'The riskiest one', multiline: true, required: true, main: true },
       {
         id: 'test',
-        label: 'Cheapest test you could run this week — no code',
+        label: 'The cheapest test you could run this week, without writing any code',
         placeholder: 'Interviews, a spreadsheet, a paper mock-up, running it by hand',
         multiline: true,
         required: true,
       },
       {
         id: 'threshold',
-        label: 'Pass or fail? Decide before you test',
+        label: 'What result would count as a pass? Decide this before you test',
         placeholder: 'e.g. 4 of 5 users finish the task without help',
         multiline: false,
         required: true,
       },
     ],
     callout: {
-      title: 'Example',
-      body: "Singapore's health appointment booking system began as a FormSG form feeding a spreadsheet. Not scalable — but it proved people would book. The test group made 24 bookings; the control group made none.",
+      title: 'A real example',
+      body: "Singapore's health appointment booking system started life as a FormSG form feeding into a spreadsheet. It would never have scaled, but it showed that people really would book: 24 bookings from the group who were offered it, and none from the group who weren't.",
     },
     shapeItLike:
-      'The belief that would kill the idea, a test you can run this week, and a pass mark set in advance.',
-    avoid: "'We'll find out once it's built.' That is the most expensive test there is.",
+      "The belief that would sink the idea, a test you could run this week, and the result you'd count as a pass.",
+    avoid:
+      "'We'll find out once it's built.' That's the slowest and most expensive way to find out, and in a hackathon you don't have the time.",
   },
   {
     id: 'experience',
@@ -245,7 +254,8 @@ export const STEPS: StepDef[] = [
     minutes: 6,
     minutesLabel: '6',
     videoId: 'wMe7WgWzIe8',
-    whyItMatters: 'People adopt things that fit their day. Design the journey, not the screen.',
+    whyItMatters:
+      "People stick with things that fit into their day. So rather than drawing a screen, walk through the moment from your user's side, including the bits where things go wrong.",
     fields: [
       {
         id: 'where',
@@ -270,14 +280,14 @@ export const STEPS: StepDef[] = [
       },
       {
         id: 'elevenStar',
-        label: 'Stretch: what would an 11-star version be? What part of it is worth building now?',
+        label: 'Stretch: what would an amazing, 11-star version look like? Which small part of it is worth building now?',
         multiline: true,
         required: false,
       },
     ],
     shapeItLike:
-      "Two minutes in the user's shoes, inside the tools they already use, including when things go wrong.",
-    avoid: 'Another portal to log in to, and no plan for wrong answers.',
+      "Two minutes in your user's shoes, inside a tool they already use, and what they see when something goes wrong.",
+    avoid: 'Asking people to log in to yet another portal, or forgetting to plan for wrong answers.',
   },
   {
     id: 'build',
@@ -288,10 +298,11 @@ export const STEPS: StepDef[] = [
     minutesLabel: '5+',
     videoId: 'sI5veUTIzkk',
     whyItMatters:
-      'Now — and only now — decide what to build. Turn your canvas into a prompt for your coding tool, then tune it until a stranger could build from it.',
+      "Well done for getting this far. Now you get to decide what to build! Turn your canvas into a prompt for your coding tool, then keep tuning it until someone who has never met you could build from it.",
     fields: [],
-    shapeItLike: 'A prompt a stranger could build from: who it is for, the problem, the metric, and the smallest first version.',
-    avoid: 'Asking for everything at once. A first version tests one assumption.',
+    shapeItLike:
+      "Enough detail that a stranger could build it: who it's for, the problem, how you'll measure success, and the smallest first version.",
+    avoid: 'Asking for everything at once. Your first version only needs to test your riskiest assumption.',
   },
 ];
 

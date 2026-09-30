@@ -53,7 +53,7 @@ describe('challenge', () => {
     const [system, user] = buildChallengeMessages(filledCanvas(), 'metric');
     expect(system?.role).toBe('system');
     expect(system?.content).toContain(PERSONA);
-    expect(system?.content).toContain("What's weak");
+    expect(system?.content).toContain('What could be stronger');
     expect(system?.content).toContain('suggestion');
     expect(user?.content).toContain('Step 4 — Useful metric');
     expect(user?.content).toContain('Primary outcome metric');
