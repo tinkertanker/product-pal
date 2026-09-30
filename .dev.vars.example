@@ -1,0 +1,17 @@
+# Local secrets and settings for `npm run dev`. Copy to .dev.vars (git-ignored).
+# In production, secrets are set with `npx wrangler secret put <NAME>`.
+
+# Workshop codes participants type to join. Comma-separated for more than one.
+# Matching ignores case and surrounding spaces.
+WORKSHOP_CODE=ABCDE
+
+# Secret. Any OpenAI-compatible Chat Completions API.
+LLM_API_KEY=your-api-key-here
+
+# These two normally come from wrangler.jsonc "vars"; set them here only to
+# override them locally.
+# LLM_BASE_URL=https://api.deepseek.com
+# LLM_MODEL=deepseek-flash
+
+# Optional. Sent as reasoning_effort only if set (e.g. low, medium, high).
+# LLM_REASONING_EFFORT=low

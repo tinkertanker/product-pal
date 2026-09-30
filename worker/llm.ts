@@ -1,8 +1,8 @@
 // The one place that talks to the LLM. Streams `delta.content` only.
 
-import { parseDelta, splitSse } from '../src/shared/sse';
 import type { Message } from '../src/shared/prompts';
-import type { Config } from './config';
+import type { Config } from '../src/shared/config';
+import { parseDelta, splitSse } from '../src/shared/sse';
 
 export const UPSTREAM_TIMEOUT_MS = 90_000;
 
@@ -38,23 +38,29 @@ export async function* streamChat(
     throw new UpstreamError(`Upstream returned ${response.status}. ${detail.slice(0, 300)}`);
   }
 
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-    buffer += decoder.decode(chunk, { stream: true });
-    const { events, rest } = splitSse(buffer);
-    buffer = rest;
-    for (const data of events) {
-      const delta = parseDelta(data);
-      if (delta.done) return;
-      if (delta.content) yield delta.content;
-      if (delta.truncated) yield TRUNCATED_NOTE;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const { events, rest } = splitSse(buffer);
+      buffer = rest;
+      for (const data of events) {
+        const delta = parseDelta(data);
+        if (delta.done) return;
+        if (delta.content) yield delta.content;
+        if (delta.truncated) yield TRUNCATED_NOTE;
+      }
     }
-  }
-  // Flush a final event that had no trailing blank line.
-  const tail = splitSse(buffer + '\n\n');
-  for (const data of tail.events) {
-    const delta = parseDelta(data);
-    if (delta.content) yield delta.content;
+    // Flush a final event that had no trailing blank line.
+    for (const data of splitSse(buffer + '\n\n').events) {
+      const delta = parseDelta(data);
+      if (delta.content) yield delta.content;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
   }
 }
