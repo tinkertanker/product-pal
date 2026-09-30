@@ -1,5 +1,6 @@
 // Canvas data model and the pure rules around it. No IO in here.
 
+import { fingerprint, type Judgement } from './contracts';
 import { STEPS, getStep } from './steps';
 
 export const STEP_IDS = ['idea', 'why', 'problem', 'metric', 'assumption', 'experience', 'build'] as const;
@@ -11,8 +12,8 @@ export type CoachStepId = (typeof COACH_STEP_IDS)[number];
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
-export type Platform = 'claude-code' | 'codex' | 'lovable' | 'other';
-export const PLATFORMS: readonly Platform[] = ['claude-code', 'codex', 'lovable', 'other'];
+export type Platform = 'claude-code' | 'codex' | 'cursor' | 'lovable' | 'other';
+export const PLATFORMS: readonly Platform[] = ['claude-code', 'codex', 'cursor', 'lovable', 'other'];
 
 export type Canvas = {
   idea: { who: string; pain: string; wish: string; oneLine: string };
@@ -23,6 +24,8 @@ export type Canvas = {
   experience: { where: string; firstTwoMinutes: string; unhappyPath: string; elevenStar: string };
   build: { platform: Platform; otherPlatform: string; includeGrill: boolean; prompt: string };
   chats: Record<StepId, ChatMessage[]>;
+  /** The AI judge's latest verdict per step. Stale once the step's fields change. */
+  judgements: Partial<Record<CoachStepId, Judgement>>;
 };
 
 export const WHY_COUNT = 5;
@@ -41,6 +44,7 @@ export function emptyCanvas(): Canvas {
     experience: { where: '', firstTwoMinutes: '', unhappyPath: '', elevenStar: '' },
     build: { platform: 'claude-code', otherPlatform: '', includeGrill: true, prompt: '' },
     chats: emptyChats(),
+    judgements: {},
   };
 }
 
@@ -83,7 +87,36 @@ export function setField(canvas: Canvas, stepId: StepId, fieldId: string, value:
 const MIN_FIELD = 10;
 const MIN_CHALLENGE = 15;
 
-export function isStepComplete(canvas: Canvas, stepId: StepId): boolean {
+/** Everything the participant wrote for a step, as one string (for fingerprints and the judge). */
+export function stepText(canvas: Canvas, stepId: CoachStepId): string {
+  return getStep(stepId)
+    .fields.map((f) => `${f.id}=${getField(canvas, stepId, f.id).trim()}`)
+    .join('\n');
+}
+
+export function stepFingerprint(canvas: Canvas, stepId: CoachStepId): string {
+  return fingerprint(stepText(canvas, stepId));
+}
+
+/** The judge's verdict for a step, if there is one and the fields haven't changed since. */
+export function currentJudgement(canvas: Canvas, stepId: CoachStepId): Judgement | undefined {
+  const j = canvas.judgements[stepId];
+  return j && j.fingerprint === stepFingerprint(canvas, stepId) ? j : undefined;
+}
+
+export type CompletionMode = { judge: boolean };
+
+/**
+ * With the judge on, steps 1–6 are done only when the judge passed the current
+ * text. Otherwise (or for the build step) the simple length rule applies.
+ */
+export function isStepComplete(canvas: Canvas, stepId: StepId, mode: CompletionMode = { judge: false }): boolean {
+  if (stepId !== 'build' && mode.judge) return filledEnough(canvas, stepId) && currentJudgement(canvas, stepId)?.pass === true;
+  return filledEnough(canvas, stepId);
+}
+
+/** The length rule: every required box has something real in it. */
+export function filledEnough(canvas: Canvas, stepId: StepId): boolean {
   if (stepId === 'build') return nonSpaceLength(canvas.build.prompt) >= MIN_FIELD;
   const step = getStep(stepId);
   if (stepId === 'why') {
@@ -103,13 +136,13 @@ export function canChallenge(canvas: Canvas, stepId: StepId): boolean {
   return getField(canvas, stepId, main.id).trim().length >= MIN_CHALLENGE;
 }
 
-export function completedCount(canvas: Canvas): number {
-  return STEPS.filter((s) => isStepComplete(canvas, s.id)).length;
+export function completedCount(canvas: Canvas, mode: CompletionMode = { judge: false }): number {
+  return STEPS.filter((s) => isStepComplete(canvas, s.id, mode)).length;
 }
 
 /** Steps 1–6 that are not complete yet (for the build step's "missing" list). */
-export function missingCoachSteps(canvas: Canvas): CoachStepId[] {
-  return COACH_STEP_IDS.filter((id) => !isStepComplete(canvas, id));
+export function missingCoachSteps(canvas: Canvas, mode: CompletionMode = { judge: false }): CoachStepId[] {
+  return COACH_STEP_IDS.filter((id) => !isStepComplete(canvas, id, mode));
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +202,28 @@ export function normaliseCanvas(input: unknown): Canvas {
       prompt: str(buildRaw.prompt),
     },
     chats,
+    judgements: normaliseJudgements(raw.judgements),
   };
+}
+
+export function normaliseJudgements(input: unknown): Canvas['judgements'] {
+  const out: Canvas['judgements'] = {};
+  if (typeof input !== 'object' || input === null) return out;
+  const raw = input as Record<string, unknown>;
+  for (const id of COACH_STEP_IDS) {
+    const j = raw[id] as Partial<Judgement> | undefined;
+    if (!j || typeof j !== 'object' || typeof j.pass !== 'boolean' || typeof j.fingerprint !== 'string' || !Array.isArray(j.checks)) continue;
+    out[id] = {
+      step: id,
+      pass: j.pass,
+      fingerprint: j.fingerprint,
+      at: typeof j.at === 'number' ? j.at : 0,
+      checks: j.checks
+        .filter((c) => c && typeof c.id === 'string' && typeof c.label === 'string' && typeof c.probability === 'number')
+        .map((c) => ({ id: c.id, label: c.label, probability: c.probability, pass: Boolean(c.pass) })),
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +236,8 @@ export function platformLabel(canvas: Canvas): string {
       return 'Claude Code';
     case 'codex':
       return 'Codex';
+    case 'cursor':
+      return 'Cursor';
     case 'lovable':
       return 'Lovable';
     default:
