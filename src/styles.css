@@ -1,16 +1,17 @@
 /* Product Thinker — calm and editorial, like a good notebook. */
 
 :root {
-  --paper: #f6f1e6;
-  --card: #fffcf5;
-  --ink: #1d1b17;
-  --ink-soft: #5d584d;
-  --line: #ddd5c3;
-  --line-strong: #c6bca4;
-  --accent: #0f5b5c;
-  --accent-hover: #0b4849;
+  --paper: #faf6f2;
+  --card: #ffffff;
+  --ink: #231f20;
+  --ink-soft: #5e5657;
+  --line: #eadfd9;
+  --line-strong: #d4c3bb;
+  --accent: #c93f39; /* Tinkercademy coral #f05d57, deepened for text contrast */
+  --brand-coral: #f05d57;
+  --accent-hover: #a9332e;
   --accent-ink: #ffffff;
-  --accent-soft: #dcebe7;
+  --accent-soft: #fde4e2;
   --highlight: #fbeeb4;
   --danger: #9b2c2c;
   --danger-soft: #f6dcd8;
@@ -38,10 +39,11 @@
     --ink-soft: #a8a190;
     --line: #37342d;
     --line-strong: #4b473d;
-    --accent: #66bdb7;
-    --accent-hover: #86d0ca;
-    --accent-ink: #082220;
-    --accent-soft: #1e3532;
+    --accent: #f46f69;
+    --brand-coral: #f05d57;
+    --accent-hover: #f78c87;
+    --accent-ink: #231f20;
+    --accent-soft: #3d2322;
     --highlight: #4a4020;
     --danger: #f0a5a0;
     --danger-soft: #402522;
