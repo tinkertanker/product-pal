@@ -6,16 +6,15 @@ import { parseDelta, splitSse } from '../src/shared/sse';
 
 export const UPSTREAM_TIMEOUT_MS = 90_000;
 
-export const TRUNCATED_NOTE = '\n\n_(The coach ran out of room here. Ask it to carry on.)_';
-
 export class UpstreamError extends Error {}
 
+/** Yields the reply text. Returns whether the reply hit the token limit. */
 export async function* streamChat(
   llm: Config['llm'],
   messages: Message[],
   maxTokens: number,
   signal: AbortSignal,
-): AsyncGenerator<string> {
+): AsyncGenerator<string, { truncated: boolean }> {
   if (!llm.baseUrl || !llm.apiKey || !llm.model) throw new UpstreamError('The coach is not configured.');
 
   const body: Record<string, unknown> = {
@@ -41,6 +40,7 @@ export async function* streamChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let truncated = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -50,16 +50,18 @@ export async function* streamChat(
       buffer = rest;
       for (const data of events) {
         const delta = parseDelta(data);
-        if (delta.done) return;
+        if (delta.done) return { truncated };
         if (delta.content) yield delta.content;
-        if (delta.truncated) yield TRUNCATED_NOTE;
+        if (delta.truncated) truncated = true;
       }
     }
     // Flush a final event that had no trailing blank line.
     for (const data of splitSse(buffer + '\n\n').events) {
       const delta = parseDelta(data);
       if (delta.content) yield delta.content;
+      if (delta.truncated) truncated = true;
     }
+    return { truncated };
   } finally {
     reader.cancel().catch(() => {});
   }
