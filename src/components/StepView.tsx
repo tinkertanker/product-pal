@@ -21,7 +21,9 @@ export function StepHeader({ step }: { step: StepDef }) {
     <header className="step-head">
       <p className="step-head__num">Step {step.number} of 7</p>
       <div className="step-head__row">
-        <h2 id="step-title">{step.title}</h2>
+        <h2 id="step-title" tabIndex={-1}>
+          {step.title}
+        </h2>
         <span className="chip">{step.minutesLabel} min</span>
         <Sticker name={STEP_STICKER[step.id]} size={64} eager className="sticker--step" />
       </div>
