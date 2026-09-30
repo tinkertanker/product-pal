@@ -1,0 +1,304 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { UnauthorisedError, streamCoach, type CoachBody } from '../api';
+import {
+  canChallenge,
+  canvasToMarkdown,
+  completedCount,
+  emptyCanvas,
+  setField,
+  type Canvas,
+  type ChatMessage,
+  type CoachStepId,
+  type StepId,
+} from '../shared/canvas';
+import { grillOpener } from '../shared/prompts';
+import { IDG_CREDIT, IDG_URL, STEPS, getMainField } from '../shared/steps';
+import { canvasForRequest, clampMessages, type CoachMode } from '../shared/validation';
+import { clearState, getClientId, loadState, saveState } from '../storage';
+import { BuildStep } from './BuildStep';
+import { CoachPanel, type PanelMode } from './CoachPanel';
+import { ConfirmDialog, type ConfirmState } from './ConfirmDialog';
+import { MobileProgress, Stepper } from './Stepper';
+import { StepHeader, StepView } from './StepView';
+
+type Busy = { kind: CoachMode; step: StepId } | null;
+
+function downloadMarkdown(canvas: Canvas) {
+  const blob = new Blob([canvasToMarkdown(canvas)], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'product-canvas.md';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function Workspace({ code, onUnauthorised }: { code: string; onUnauthorised: () => void }) {
+  const [initial] = useState(loadState);
+  const [canvas, setCanvas] = useState<Canvas>(initial.canvas);
+  const [challenges, setChallenges] = useState(initial.challenges);
+  const [stepIndex, setStepIndex] = useState(initial.step);
+  const [panelModes, setPanelModes] = useState<Partial<Record<StepId, PanelMode>>>({});
+  const [tune, setTune] = useState('');
+  const [busy, setBusy] = useState<Busy>(null);
+  const [error, setError] = useState<{ step: StepId; message: string } | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
+
+  const step = STEPS[stepIndex] ?? STEPS[0]!;
+  const done = completedCount(canvas);
+
+  // Autosave, debounced.
+  useEffect(() => {
+    const timer = window.setTimeout(() => saveState({ canvas, challenges, step: stepIndex }), 400);
+    return () => window.clearTimeout(timer);
+  }, [canvas, challenges, stepIndex]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const goTo = useCallback((index: number) => {
+    setStepIndex(index);
+    window.scrollTo({ top: 0 });
+    mainRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const update = useCallback((fn: (c: Canvas) => Canvas) => setCanvas(fn), []);
+  const setChat = (id: StepId, fn: (messages: ChatMessage[]) => ChatMessage[]) =>
+    update((c) => ({ ...c, chats: { ...c.chats, [id]: fn(c.chats[id]) } }));
+  const setPanel = (id: StepId, mode: PanelMode) => setPanelModes((p) => ({ ...p, [id]: mode }));
+
+  /** Run one coach request. Only one at a time. Resolves with the text, or null on failure. */
+  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>, onText: (text: string) => void): Promise<string | null> {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBusy({ kind, step: stepId });
+    setError(null);
+    try {
+      return await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, onText, controller.signal);
+    } catch (e) {
+      if (e instanceof UnauthorisedError) {
+        onUnauthorised();
+      } else if (!controller.signal.aborted) {
+        setError({ step: stepId, message: e instanceof Error ? e.message : 'The coach could not answer. Try again.' });
+      }
+      return null;
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setBusy(null);
+      }
+    }
+  }
+
+  // ---- Challenge ---------------------------------------------------------
+  async function challenge() {
+    const id = step.id as CoachStepId;
+    if (busy || !canChallenge(canvas, id)) return;
+    setPanel(id, 'challenge');
+    setChallenges((c) => ({ ...c, [id]: '' }));
+    const text = await run('challenge', id, { step: id, canvas: canvasForRequest(canvas) }, (t) => setChallenges((c) => ({ ...c, [id]: t })));
+    if (text === null) setChallenges((c) => (c[id] ? c : { ...c, [id]: undefined }));
+  }
+
+  function useSuggestion(text: string) {
+    const main = getMainField(step.id);
+    if (main) update((c) => setField(c, step.id, main.id, text));
+  }
+
+  // ---- Grill -------------------------------------------------------------
+  async function sendGrill(id: CoachStepId, history: ChatMessage[]) {
+    // `history` already ends with the participant's turn.
+    setChat(id, () => [...history, { role: 'assistant', content: '' }]);
+    const text = await run('grill', id, { step: id, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
+      setChat(id, (m) => [...m.slice(0, -1), { role: 'assistant', content: t }]),
+    );
+    if (text === null) setChat(id, (m) => (m[m.length - 1]?.content === '' ? m.slice(0, -1) : m));
+  }
+
+  function grill() {
+    const id = step.id as CoachStepId;
+    if (busy) return;
+    setPanel(id, 'grill');
+    const existing = canvas.chats[id];
+    if (existing.length === 0) void sendGrill(id, [{ role: 'user', content: grillOpener(id) }]);
+  }
+
+  function answerGrill(text: string) {
+    const id = step.id as CoachStepId;
+    void sendGrill(id, [...canvas.chats[id], { role: 'user', content: text }]);
+  }
+
+  function restartGrill() {
+    const id = step.id as CoachStepId;
+    setChat(id, () => []);
+    void sendGrill(id, [{ role: 'user', content: grillOpener(id) }]);
+  }
+
+  // ---- Build and tune ----------------------------------------------------
+  async function writePrompt() {
+    if (busy) return;
+    const write = async () => {
+      const previous = canvas.build.prompt;
+      setPanelModes((p) => ({ ...p, build: undefined }));
+      update((c) => ({ ...c, build: { ...c.build, prompt: '' } }));
+      const text = await run('build', 'build', { canvas: canvasForRequest(canvas) }, (t) => update((c) => ({ ...c, build: { ...c.build, prompt: t } })));
+      if (text === null || text.trim() === '') update((c) => ({ ...c, build: { ...c.build, prompt: previous } }));
+    };
+    if (canvas.build.prompt.trim()) {
+      setConfirm({
+        title: 'Replace your build prompt?',
+        message: 'A new prompt will replace the current one, including any edits you have made.',
+        confirmLabel: 'Replace it',
+        onConfirm: () => void write(),
+      });
+    } else {
+      await write();
+    }
+  }
+
+  async function tunePrompt() {
+    if (busy) return;
+    setPanel('build', 'tune');
+    setTune('');
+    await run('tune', 'build', { canvas: canvasForRequest(canvas) }, setTune);
+  }
+
+  // ---- Start over --------------------------------------------------------
+  function startOver() {
+    setConfirm({
+      title: 'Start over?',
+      message: 'This clears everything you have written on this device. Your workshop code stays.',
+      confirmLabel: 'Clear it all',
+      onConfirm: () => {
+        abortRef.current?.abort();
+        setBusy(null);
+        clearState();
+        setCanvas(emptyCanvas());
+        setChallenges({});
+        setPanelModes({});
+        setTune('');
+        setError(null);
+        goTo(0);
+      },
+    });
+  }
+
+  // ---- Panel view --------------------------------------------------------
+  const id = step.id;
+  const chat = canvas.chats[id];
+  const available: PanelMode[] =
+    id === 'build'
+      ? tune || busy?.kind === 'tune' ? ['tune'] : []
+      : [
+          ...(challenges[id] !== undefined || busy?.kind === 'challenge' ? (['challenge'] as const) : []),
+          ...(chat.length > 0 ? (['grill'] as const) : []),
+        ];
+  const chosen = panelModes[id];
+  const mode: PanelMode | null = chosen && available.includes(chosen) ? chosen : (available[available.length - 1] ?? null);
+  const stepBusy = busy?.step === id;
+  const mainLabel = getMainField(id)?.label ?? '';
+  const stepError = error && error.step === id ? error.message : '';
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="topbar__inner">
+          <p className="brand">Product Thinker</p>
+          <p className="topbar__progress" aria-label={`${done} of 7 steps complete`}>
+            {done} of 7
+          </p>
+          <div className="topbar__actions">
+            <button type="button" className="btn btn--small" onClick={() => downloadMarkdown(canvas)}>
+              Download<span className="hide-narrow"> (.md)</span>
+            </button>
+            <button type="button" className="btn btn--small btn--quiet" onClick={startOver}>
+              Start over
+            </button>
+          </div>
+        </div>
+        <MobileProgress canvas={canvas} current={stepIndex} onSelect={goTo} />
+      </header>
+
+      <div className="layout">
+        <Stepper canvas={canvas} current={stepIndex} onSelect={goTo} />
+
+        <main className="main" ref={mainRef} tabIndex={-1} id="main">
+          <div className="main__content">
+            <StepHeader step={step} />
+            {step.id === 'build' ? (
+              <BuildStep
+                canvas={canvas}
+                busy={busy !== null}
+                writing={busy?.kind === 'build'}
+                onBuild={(patch) => update((c) => ({ ...c, build: { ...c.build, ...patch } }))}
+                onWrite={() => void writePrompt()}
+                onTune={() => void tunePrompt()}
+                onDownload={() => downloadMarkdown(canvas)}
+                onGoToStep={goTo}
+              />
+            ) : (
+              <StepView
+                step={step}
+                canvas={canvas}
+                onField={(fieldId, value) => update((c) => setField(c, step.id, fieldId, value))}
+                canChallenge={canChallenge(canvas, step.id)}
+                busy={busy !== null}
+                onChallenge={() => void challenge()}
+                onGrill={grill}
+              />
+            )}
+          </div>
+
+          <div className="main__coach">
+            <CoachPanel
+              mode={mode}
+              available={available}
+              onMode={(m) => setPanel(id, m)}
+              busy={stepBusy}
+              error={stepError}
+              challengeText={challenges[id] ?? ''}
+              tuneText={tune}
+              chat={chat}
+              mainFieldLabel={mainLabel}
+              onUseSuggestion={useSuggestion}
+              onSendChat={answerGrill}
+              onRestartGrill={restartGrill}
+              emptyText={
+                id === 'build'
+                  ? 'Press “Tune this prompt” and the coach will say what is missing, unclear or too big.'
+                  : 'Write something in the main box, then press “Challenge this”. Or press “Grill me” to be questioned.'
+              }
+            />
+          </div>
+
+          <nav className="pager" aria-label="Previous and next step">
+            <button type="button" className="btn" onClick={() => goTo(stepIndex - 1)} disabled={stepIndex === 0}>
+              ← Previous
+            </button>
+            {stepIndex < STEPS.length - 1 && (
+              <button type="button" className="btn btn--primary" onClick={() => goTo(stepIndex + 1)}>
+                Next →
+              </button>
+            )}
+          </nav>
+        </main>
+      </div>
+
+      <footer className="footer">
+        <p>
+          Frameworks from Product Thinking 101 by the{' '}
+          <a href={IDG_URL} target="_blank" rel="noreferrer" title={IDG_CREDIT}>
+            Institute of Digital Government
+          </a>
+          .
+        </p>
+      </footer>
+
+      <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />
+    </div>
+  );
+}
