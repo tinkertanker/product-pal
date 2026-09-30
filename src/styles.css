@@ -571,6 +571,10 @@ label {
   font-size: clamp(1.7rem, 5vw, 2.25rem);
   min-width: 0;
 }
+/* Focused by script on each step change; like .main, it needs no ring. */
+.step-head h2:focus {
+  outline: none;
+}
 .step-head__row .sticker {
   margin-left: auto;
 }

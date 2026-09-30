@@ -100,9 +100,11 @@ function GrillChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; bus
   const endRef = useRef<HTMLDivElement>(null);
   const last = chat[chat.length - 1];
 
+  // Follow the reply only while it arrives. Doing it on every change also fired
+  // on a step change and dragged the page down to the old chat on mobile.
   useEffect(() => {
-    endRef.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [chat.length, last?.content.length]);
+    if (busy) endRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [busy, chat.length, last?.content.length]);
 
   function submit(event: FormEvent) {
     event.preventDefault();

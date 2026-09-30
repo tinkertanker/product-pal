@@ -56,6 +56,7 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<{ step: StepId; message: string } | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [moves, setMoves] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
@@ -72,9 +73,15 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
 
   const goTo = useCallback((index: number) => {
     setStepIndex(index);
-    window.scrollTo({ top: 0 });
-    mainRef.current?.focus({ preventScroll: true });
+    setMoves((n) => n + 1);
   }, []);
+
+  // Once the new step has rendered, show it from the top and move focus to its title.
+  useEffect(() => {
+    if (moves === 0) return;
+    window.scrollTo({ top: 0 });
+    mainRef.current?.querySelector<HTMLElement>('#step-title')?.focus({ preventScroll: true });
+  }, [moves]);
 
   const update = useCallback((fn: (c: Canvas) => Canvas) => setCanvas(fn), []);
   const setChat = (id: StepId, fn: (messages: ChatMessage[]) => ChatMessage[]) =>
