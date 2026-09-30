@@ -1,5 +1,6 @@
 // Talking to our own server. Nothing here knows about prompts.
 
+import { readCoachStream } from './shared/coachStream';
 import type { CoachMode } from './shared/validation';
 import type { Canvas, ChatMessage, CoachStepId } from './shared/canvas';
 
@@ -38,11 +39,20 @@ export async function joinWorkshop(code: string): Promise<{ ok: true } | { ok: f
   }
 }
 
+const COACH_STOPPED = 'Your coach stopped partway through. Please try again in a moment.';
+
+export type CoachResult = {
+  text: string;
+  /** The reply hit the length limit, so its end is missing. */
+  truncated: boolean;
+};
+
 /**
  * Stream a coach reply. `onText` receives the whole reply so far each time
- * more arrives. Resolves with the final text.
+ * more arrives. Resolves with the final text, or throws if the reply failed,
+ * including partway through. Error text is never part of the reply.
  */
-export async function streamCoach(body: CoachBody, onText: (textSoFar: string) => void, signal: AbortSignal): Promise<string> {
+export async function streamCoach(body: CoachBody, onText: (textSoFar: string) => void, signal: AbortSignal): Promise<CoachResult> {
   let response: Response;
   try {
     response = await fetch('/api/coach', {
@@ -60,14 +70,27 @@ export async function streamCoach(body: CoachBody, onText: (textSoFar: string) =
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  let raw = '';
   let text = '';
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    text += decoder.decode(value, { stream: true });
-    onText(text);
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new Error(COACH_STOPPED);
+    }
+    if (chunk.done) break;
+    raw += decoder.decode(chunk.value, { stream: true });
+    const next = readCoachStream(raw).text;
+    if (next !== text) {
+      text = next;
+      onText(text);
+    }
   }
-  text += decoder.decode();
-  onText(text);
-  return text;
+  raw += decoder.decode();
+  const { text: final, end } = readCoachStream(raw);
+  if (end !== 'ok' && end !== 'truncated') throw new Error(COACH_STOPPED);
+  if (final !== text) onText(final);
+  return { text: final, truncated: end === 'truncated' };
 }

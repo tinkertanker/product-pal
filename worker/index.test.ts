@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handle, type Env } from './index';
 import { emptyCanvas } from '../src/shared/canvas';
+import { END_MARK, endMarker } from '../src/shared/coachStream';
 
 const env = (over: Partial<Env> = {}): Env => ({
   ASSETS: { fetch: async () => new Response('asset') } as unknown as Fetcher,
@@ -75,12 +76,12 @@ describe('/api/coach', () => {
     expect(await res.json()).toEqual({ error: 'Unknown mode.' });
   });
 
-  it('streams only delta.content and adds the truncation note', async () => {
+  it('streams only delta.content, then an end marker', async () => {
     const fetchMock = vi.fn(async () =>
       sse(
         JSON.stringify({ choices: [{ delta: { reasoning_content: 'thinking' } }] }),
         JSON.stringify({ choices: [{ delta: { content: 'Hello ' } }] }),
-        JSON.stringify({ choices: [{ delta: { content: 'there' }, finish_reason: 'length' }] }),
+        JSON.stringify({ choices: [{ delta: { content: 'there' } }] }),
         '[DONE]',
       ),
     );
@@ -88,25 +89,59 @@ describe('/api/coach', () => {
     const res = await handle(post('/api/coach', coachBody()), env());
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/plain');
-    const text = await res.text();
-    expect(text.startsWith('Hello there')).toBe(true);
-    expect(text).toContain('ran out of room here');
-    expect(text).not.toContain('thinking');
+    expect(await res.text()).toBe(`Hello there${endMarker('ok')}`);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://llm.example.com/chat/completions');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer test-key');
   });
 
-  it('says so when the upstream fails or is empty', async () => {
+  it('marks a reply that hit the token cap, without adding text', async () => {
+    vi.stubGlobal('fetch', async () =>
+      sse(JSON.stringify({ choices: [{ delta: { content: 'Hello' }, finish_reason: 'length' }] }), '[DONE]'),
+    );
+    const text = await (await handle(post('/api/coach', coachBody()), env())).text();
+    expect(text).toBe(`Hello${endMarker('truncated')}`);
+  });
+
+  it('strips the end marker from model text', async () => {
+    vi.stubGlobal('fetch', async () => sse(JSON.stringify({ choices: [{ delta: { content: `a${END_MARK}b` } }] }), '[DONE]'));
+    expect(await (await handle(post('/api/coach', coachBody()), env())).text()).toBe(`ab${endMarker('ok')}`);
+  });
+
+  it('answers with an error status when the upstream fails or is empty', async () => {
     vi.stubGlobal('fetch', async () => new Response('bad', { status: 500 }));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await (await handle(post('/api/coach', coachBody()), env())).text()).toContain('could not answer');
+    const failed = await handle(post('/api/coach', coachBody()), env());
+    expect(failed.status).toBe(502);
+    expect(((await failed.json()) as { error: string }).error).toContain('could not answer');
     vi.stubGlobal('fetch', async () => sse('[DONE]'));
-    expect(await (await handle(post('/api/coach', coachBody()), env())).text()).toContain('ran out of room before');
+    const empty = await handle(post('/api/coach', coachBody()), env());
+    expect(empty.status).toBe(502);
+    expect(((await empty.json()) as { error: string }).error).toContain('ran out of room before');
+  });
+
+  it('marks a reply that breaks off partway, without adding error text', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const encoder = new TextEncoder();
+    vi.stubGlobal('fetch', async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(out) {
+            out.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Half a ' } }] })}\n\n`));
+          },
+          pull(out) {
+            out.error(new Error('connection reset'));
+          },
+        }),
+      ),
+    );
+    const res = await handle(post('/api/coach', coachBody()), env());
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(`Half a ${endMarker('failed')}`);
   });
 
   it('limits by client id and IP, and works without bindings', async () => {
-    vi.stubGlobal('fetch', async () => sse('[DONE]'));
+    vi.stubGlobal('fetch', async () => sse(JSON.stringify({ choices: [{ delta: { content: 'Hi' } }] }), '[DONE]'));
     const seen: string[] = [];
     const limiter = (ok: boolean) => ({ limit: async ({ key }: { key: string }) => (seen.push(key), { success: ok }) });
     const headers = { 'CF-Connecting-IP': '9.9.9.9' };

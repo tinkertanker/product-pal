@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { UnauthorisedError, streamCoach, type CoachBody } from '../api';
+import { UnauthorisedError, streamCoach, type CoachBody, type CoachResult } from '../api';
 import {
   canChallenge,
   canvasToMarkdown,
@@ -23,6 +23,16 @@ import { Sticker } from './Sticker';
 import { StepHeader, StepView } from './StepView';
 
 type Busy = { kind: CoachMode; step: StepId } | null;
+
+const CUT_SHORT = 'Your coach ran out of room before finishing, so the end of this reply is missing. Try again for a full answer.';
+
+/** Shown when a reply hits the length limit. The reply itself is kept. */
+const TRUNCATED: Record<CoachMode, string> = {
+  challenge: CUT_SHORT,
+  grill: 'Your coach ran out of room before finishing. Ask it to carry on.',
+  build: 'Your coach ran out of room before finishing your prompt, so the end may be missing. Check the last section, or press Rewrite to try again.',
+  tune: CUT_SHORT,
+};
 
 function downloadMarkdown(canvas: Canvas) {
   const blob = new Blob([canvasToMarkdown(canvas)], { type: 'text/markdown;charset=utf-8' });
@@ -71,15 +81,20 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     update((c) => ({ ...c, chats: { ...c.chats, [id]: fn(c.chats[id]) } }));
   const setPanel = (id: StepId, mode: PanelMode) => setPanelModes((p) => ({ ...p, [id]: mode }));
 
-  /** Run one coach request. Only one at a time. Resolves with the text, or null on failure. */
-  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>, onText: (text: string) => void): Promise<string | null> {
+  /**
+   * Run one coach request. Only one at a time. Resolves with the reply, or
+   * null on failure; the caller then undoes whatever it streamed in.
+   */
+  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>, onText: (text: string) => void): Promise<CoachResult | null> {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy({ kind, step: stepId });
     setError(null);
     try {
-      return await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, onText, controller.signal);
+      const result = await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, onText, controller.signal);
+      if (result.truncated) setError({ step: stepId, message: TRUNCATED[kind] });
+      return result;
     } catch (e) {
       if (e instanceof UnauthorisedError) {
         onUnauthorised();
@@ -101,8 +116,9 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     if (busy || !canChallenge(canvas, id)) return;
     setPanel(id, 'challenge');
     setChallenges((c) => ({ ...c, [id]: '' }));
-    const text = await run('challenge', id, { step: id, canvas: canvasForRequest(canvas) }, (t) => setChallenges((c) => ({ ...c, [id]: t })));
-    if (text === null) setChallenges((c) => (c[id] ? c : { ...c, [id]: undefined }));
+    const result = await run('challenge', id, { step: id, canvas: canvasForRequest(canvas) }, (t) => setChallenges((c) => ({ ...c, [id]: t })));
+    // A reply that broke off is dropped, so its draft can't be used.
+    if (result === null) setChallenges((c) => ({ ...c, [id]: undefined }));
   }
 
   function useSuggestion(text: string) {
@@ -114,10 +130,17 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
   async function sendGrill(id: CoachStepId, history: ChatMessage[]) {
     // `history` already ends with the participant's turn.
     setChat(id, () => [...history, { role: 'assistant', content: '' }]);
-    const text = await run('grill', id, { step: id, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
+    const result = await run('grill', id, { step: id, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
       setChat(id, (m) => [...m.slice(0, -1), { role: 'assistant', content: t }]),
     );
-    if (text === null) setChat(id, (m) => (m[m.length - 1]?.content === '' ? m.slice(0, -1) : m));
+    if (result === null) {
+      // Drop the coach's turn, even if part of it arrived, so it isn't saved or sent back.
+      // If only the automatic opener is left, clear it so Grill me starts afresh.
+      setChat(id, (m) => {
+        const rest = m[m.length - 1]?.role === 'assistant' ? m.slice(0, -1) : m;
+        return rest.length === 1 && rest[0]?.content === grillOpener(id) ? [] : rest;
+      });
+    }
   }
 
   function grill() {
@@ -146,8 +169,9 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
       const previous = canvas.build.prompt;
       setPanelModes((p) => ({ ...p, build: undefined }));
       update((c) => ({ ...c, build: { ...c.build, prompt: '' } }));
-      const text = await run('build', 'build', { canvas: canvasForRequest(canvas) }, (t) => update((c) => ({ ...c, build: { ...c.build, prompt: t } })));
-      if (text === null || text.trim() === '') update((c) => ({ ...c, build: { ...c.build, prompt: previous } }));
+      const result = await run('build', 'build', { canvas: canvasForRequest(canvas) }, (t) => update((c) => ({ ...c, build: { ...c.build, prompt: t } })));
+      // On failure, put back the prompt they had, edits included.
+      if (result === null || result.text.trim() === '') update((c) => ({ ...c, build: { ...c.build, prompt: previous } }));
     };
     if (canvas.build.prompt.trim()) {
       setConfirm({
@@ -165,7 +189,8 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     if (busy) return;
     setPanel('build', 'tune');
     setTune('');
-    await run('tune', 'build', { canvas: canvasForRequest(canvas) }, setTune);
+    const result = await run('tune', 'build', { canvas: canvasForRequest(canvas) }, setTune);
+    if (result === null) setTune('');
   }
 
   // ---- Start over --------------------------------------------------------

@@ -1,6 +1,7 @@
 // Cloudflare Worker entry. Thin shell: parse, call the pure core in src/shared,
 // stream the result. Anything that is not /api/* is served as static assets.
 
+import { cleanChunk, endMarker, type StreamEnd } from '../src/shared/coachStream';
 import { configFromEnv, configWarnings, type Config } from '../src/shared/config';
 import {
   RATE_LIMIT_MESSAGE,
@@ -66,28 +67,51 @@ async function checkCode(code: unknown, config: Config, env: Env, ip: string | n
   return allowed ? json({ error: BAD_CODE }, 401) : tooManyRequests();
 }
 
-function streamReply(request: CoachRequest, config: Config): Response {
+/**
+ * Wait for the first words before answering, so a reply that fails or comes
+ * back empty gets an error status. After that, stream the text and end with
+ * a marker saying whether it finished, ran out of room or broke off.
+ */
+async function streamReply(request: CoachRequest, config: Config): Promise<Response> {
   const encoder = new TextEncoder();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error('timeout')), UPSTREAM_TIMEOUT_MS);
   const chunks = streamChat(config.llm, buildMessages(request), maxTokensFor(request.mode), controller.signal);
-  let wrote = false;
+  const logFailure = (error: unknown) => console.error('[coach] upstream failed:', error instanceof Error ? error.message : error);
+
+  let first: Awaited<ReturnType<typeof chunks.next>>;
+  try {
+    first = await chunks.next();
+  } catch (error) {
+    clearTimeout(timeout);
+    logFailure(error);
+    return json({ error: LLM_FAILED }, 502);
+  }
+  if (first.done) {
+    clearTimeout(timeout);
+    return json({ error: LLM_EMPTY }, 502);
+  }
+  const firstText = first.value;
 
   const body = new ReadableStream<Uint8Array>({
+    start(out) {
+      out.enqueue(encoder.encode(cleanChunk(firstText)));
+    },
     async pull(out) {
+      let end: StreamEnd;
       try {
         const next = await chunks.next();
         if (!next.done) {
-          wrote = true;
-          out.enqueue(encoder.encode(next.value));
+          out.enqueue(encoder.encode(cleanChunk(next.value)));
           return;
         }
-        if (!wrote) out.enqueue(encoder.encode(LLM_EMPTY));
+        end = next.value.truncated ? 'truncated' : 'ok';
       } catch (error) {
-        console.error('[coach] upstream failed:', error instanceof Error ? error.message : error);
-        out.enqueue(encoder.encode(wrote ? `\n\n${LLM_FAILED}` : LLM_FAILED));
+        logFailure(error);
+        end = 'failed';
       }
       clearTimeout(timeout);
+      out.enqueue(encoder.encode(endMarker(end)));
       out.close();
     },
     cancel() {
