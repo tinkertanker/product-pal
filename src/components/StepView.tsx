@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { IDG_CREDIT, IDG_URL, PLAYLIST_URL, embedUrl, type StepDef } from '../shared/steps';
 import { getField, type Canvas } from '../shared/canvas';
 import { FieldInput } from './FieldInput';
+import { STEP_STICKER, Sticker } from './Sticker';
 
 const FOUR_CS = ['clarity', 'consequence', 'cause', 'confirmation'];
 
@@ -22,6 +23,7 @@ export function StepHeader({ step }: { step: StepDef }) {
       <div className="step-head__row">
         <h2 id="step-title">{step.title}</h2>
         <span className="chip">{step.minutesLabel} min</span>
+        <Sticker name={STEP_STICKER[step.id]} size={64} eager className="sticker--step" />
       </div>
       <p className="why">
         <strong>Why this matters.</strong> {step.whyItMatters}
@@ -69,7 +71,7 @@ export function Hints({ step }: { step: StepDef }) {
           <dd>{step.shapeItLike}</dd>
         </div>
         <div>
-          <dt>Avoid</dt>
+          <dt>Watch out for</dt>
           <dd>{step.avoid}</dd>
         </div>
       </dl>
@@ -132,7 +134,7 @@ export function StepView({ step, canvas, onField, canChallenge, busy, onChalleng
           className="btn btn--primary"
           onClick={onChallenge}
           disabled={!canChallenge || busy}
-          title={canChallenge ? undefined : 'Write something first'}
+          title={canChallenge ? undefined : 'Write a few words first'}
           aria-describedby={canChallenge ? undefined : 'challenge-hint'}
         >
           Challenge this
@@ -142,7 +144,7 @@ export function StepView({ step, canvas, onField, canChallenge, busy, onChalleng
         </button>
         {!canChallenge && (
           <span id="challenge-hint" className="actions__hint">
-            Write something first
+            Write a few words first
           </span>
         )}
       </div>

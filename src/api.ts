@@ -32,9 +32,9 @@ export async function joinWorkshop(code: string): Promise<{ ok: true } | { ok: f
       body: JSON.stringify({ code }),
     });
     if (response.ok) return { ok: true };
-    return { ok: false, error: await errorFrom(response, 'Something went wrong. Try again.') };
+    return { ok: false, error: await errorFrom(response, 'Something went wrong on our side. Please try again in a moment.') };
   } catch {
-    return { ok: false, error: "Can't reach the server. Check your connection and try again." };
+    return { ok: false, error: "We can't reach the server just now. Please check your connection and try again." };
   }
 }
 
@@ -53,10 +53,10 @@ export async function streamCoach(body: CoachBody, onText: (textSoFar: string) =
     });
   } catch (error) {
     if (signal.aborted) throw error;
-    throw new Error("Can't reach the server. Check your connection and try again.");
+    throw new Error("We can't reach the server just now. Please check your connection and try again.");
   }
   if (response.status === 401) throw new UnauthorisedError();
-  if (!response.ok || !response.body) throw new Error(await errorFrom(response, 'The coach could not answer. Try again.'));
+  if (!response.ok || !response.body) throw new Error(await errorFrom(response, "Your coach couldn't answer just now. Please try again in a moment."));
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

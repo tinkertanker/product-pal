@@ -19,6 +19,7 @@ import { BuildStep } from './BuildStep';
 import { CoachPanel, type PanelMode } from './CoachPanel';
 import { ConfirmDialog, type ConfirmState } from './ConfirmDialog';
 import { MobileProgress, Stepper } from './Stepper';
+import { Sticker } from './Sticker';
 import { StepHeader, StepView } from './StepView';
 
 type Busy = { kind: CoachMode; step: StepId } | null;
@@ -83,7 +84,7 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
       if (e instanceof UnauthorisedError) {
         onUnauthorised();
       } else if (!controller.signal.aborted) {
-        setError({ step: stepId, message: e instanceof Error ? e.message : 'The coach could not answer. Try again.' });
+        setError({ step: stepId, message: e instanceof Error ? e.message : "Your coach couldn't answer just now. Please try again in a moment." });
       }
       return null;
     } finally {
@@ -151,8 +152,8 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     if (canvas.build.prompt.trim()) {
       setConfirm({
         title: 'Replace your build prompt?',
-        message: 'A new prompt will replace the current one, including any edits you have made.',
-        confirmLabel: 'Replace it',
+        message: "A new prompt will replace the one you have now, including any edits you've made.",
+        confirmLabel: 'Yes, replace it',
         onConfirm: () => void write(),
       });
     } else {
@@ -171,8 +172,8 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
   function startOver() {
     setConfirm({
       title: 'Start over?',
-      message: 'This clears everything you have written on this device. Your workshop code stays.',
-      confirmLabel: 'Clear it all',
+      message: "This clears everything you've written on this device. Your workshop code stays, so you can start again straight away.",
+      confirmLabel: 'Yes, clear it',
       onConfirm: () => {
         abortRef.current?.abort();
         setBusy(null);
@@ -207,10 +208,16 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
     <div className="app">
       <header className="topbar">
         <div className="topbar__inner">
-          <p className="brand">Product Thinker</p>
-          <p className="topbar__progress" aria-label={`${done} of 7 steps complete`}>
-            {done} of 7
+          <p className="brand">
+            <Sticker name="face" size={28} eager className="sticker--brand" />
+            Product Pal
           </p>
+          <div className="topbar__status">
+            <p className="topbar__progress" aria-label={`${done} of 7 steps complete`}>
+              {done} of 7
+            </p>
+            {done === STEPS.length && <Sticker name="yay" size={34} eager className="sticker--done hide-narrow" />}
+          </div>
           <div className="topbar__actions">
             <button type="button" className="btn btn--small" onClick={() => downloadMarkdown(canvas)}>
               Download<span className="hide-narrow"> (.md)</span>
@@ -269,8 +276,8 @@ export function Workspace({ code, onUnauthorised }: { code: string; onUnauthoris
               onRestartGrill={restartGrill}
               emptyText={
                 id === 'build'
-                  ? 'Press “Tune this prompt” and the coach will say what is missing, unclear or too big.'
-                  : 'Write something in the main box, then press “Challenge this”. Or press “Grill me” to be questioned.'
+                  ? "Once your build prompt is written, press Tune this prompt and I'll tell you what is missing, what is unclear and what is too big to build in one go."
+                  : "When you've written a first go, press Challenge this and I'll tell you what's working and what could be stronger. Or press Grill me and I'll ask you questions."
               }
             />
           </div>

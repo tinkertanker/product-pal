@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { joinWorkshop } from '../api';
+import { Sticker } from './Sticker';
 
 type Props = { notice?: string; onJoined: (code: string) => void };
 
@@ -12,7 +13,7 @@ export function JoinScreen({ notice, onJoined }: Props) {
     event.preventDefault();
     const trimmed = code.trim();
     if (trimmed.length < 5) {
-      setError('Enter the code from the screen. It has 5 to 8 characters.');
+      setError('Please type the code from the screen. It has 5 to 8 characters.');
       return;
     }
     setBusy(true);
@@ -26,9 +27,14 @@ export function JoinScreen({ notice, onJoined }: Props) {
   return (
     <main className="join">
       <div className="join__card">
-        <p className="eyebrow">Product Thinker</p>
-        <h1>Think before you build.</h1>
-        <p className="join__sub">One idea, done properly. About 40 minutes.</p>
+        <div className="join__hero">
+          <div className="join__title">
+            <p className="eyebrow">Product Pal</p>
+            <h1>Think before you build.</h1>
+          </div>
+          <Sticker name="greetings" size={132} eager className="sticker--join" />
+        </div>
+        <p className="join__sub">Let's take one idea and think it through properly. It takes about 40 minutes.</p>
 
         {notice && (
           <p className="notice" role="status">
@@ -66,7 +72,7 @@ export function JoinScreen({ notice, onJoined }: Props) {
           )}
         </form>
 
-        <p className="join__safe">Use made-up or anonymised details. Don't paste anything confidential.</p>
+        <p className="join__safe">Please use made-up or anonymised details, and keep anything confidential out of here.</p>
       </div>
     </main>
   );

@@ -25,7 +25,7 @@ export function App() {
       code={code}
       onUnauthorised={() => {
         clearCode();
-        setNotice('Your workshop code has changed — ask your facilitator.');
+        setNotice("Your workshop code isn't working any more. Please ask your facilitator for the current one.");
         setCode('');
       }}
     />

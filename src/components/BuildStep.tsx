@@ -59,7 +59,7 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
 
       {missing.length > 0 && (
         <div className="callout callout--warn" role="status">
-          <p className="callout__title">Finish these steps first</p>
+          <p className="callout__title">A few steps to finish first</p>
           <ul className="missing">
             {missing.map((id) => {
               const s = getStep(id);
@@ -85,7 +85,7 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
 
       <div className="field">
         <label htmlFor="build-prompt">Your build prompt</label>
-        <p className="field__help">Edit it freely. Paste it into your coding tool when you are happy.</p>
+        <p className="field__help">Feel free to edit it. When you're happy with it, paste it into your coding tool.</p>
         <textarea
           id="build-prompt"
           className="prompt-box"
@@ -93,7 +93,7 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
           value={build.prompt}
           onChange={(e) => onBuild({ prompt: e.target.value })}
           maxLength={12000}
-          placeholder={writing ? 'Writing…' : 'Your prompt will appear here.'}
+          placeholder={writing ? 'Writing your prompt…' : "Your prompt will appear here once it's written."}
           aria-busy={writing}
         />
         <p className="field__help">{words.toLocaleString('en-GB')} words</p>
@@ -138,7 +138,7 @@ export function BuildStep({ canvas, busy, writing, onBuild, onWrite, onTune, onD
 
       <section className="card card--grill" aria-labelledby="grill-title">
         <h3 id="grill-title">Take the grill with you</h3>
-        <p>Paste this into any AI assistant, then add your canvas or build prompt where it says so.</p>
+        <p>Paste this into any AI assistant, then add your canvas or build prompt where it asks for it.</p>
         <pre className="grill-prompt">{GRILL_PROMPT}</pre>
         <div className="actions">
           <CopyButton text={GRILL_PROMPT} label="Copy grilling prompt" />

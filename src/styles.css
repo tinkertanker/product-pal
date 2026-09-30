@@ -1,4 +1,4 @@
-/* Product Thinker — calm and editorial, like a good notebook. */
+/* Product Pal — calm and editorial, like a good notebook. */
 
 :root {
   --paper: #faf6f2;
@@ -232,6 +232,15 @@ label {
   margin: 0.75em 0 0;
   font-size: 0.95rem;
 }
+.error--with-sticker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.error--with-sticker p {
+  margin: 0;
+  min-width: 0;
+}
 .notice {
   background: var(--warn-soft);
   border-radius: 8px;
@@ -262,6 +271,19 @@ label {
 .join h1 {
   font-size: clamp(2.2rem, 8vw, 3.2rem);
   margin-bottom: 0.5rem;
+}
+.join__hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0.5rem;
+}
+.join__title {
+  min-width: 0;
+}
+.join__title h1 {
+  margin-bottom: 0;
 }
 .join__sub {
   color: var(--ink-soft);
@@ -321,11 +343,19 @@ label {
   margin: 0 auto;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-display);
   font-size: 1.2rem;
   font-weight: 600;
   margin: 0;
   flex: 1;
+}
+.topbar__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .topbar__progress {
   margin: 0;
@@ -539,6 +569,10 @@ label {
 }
 .step-head h2 {
   font-size: clamp(1.7rem, 5vw, 2.25rem);
+  min-width: 0;
+}
+.step-head__row .sticker {
+  margin-left: auto;
 }
 .chip {
   font-size: 0.8rem;
@@ -648,9 +682,19 @@ label {
 }
 .field--main input,
 .field--main textarea {
-  border-color: var(--accent);
+  border-color: var(--ink-soft);
   border-width: 1.5px;
-  background: color-mix(in srgb, var(--accent-soft) 35%, var(--card));
+}
+.field--main > label::after {
+  content: 'Main box';
+  margin-left: 0.5em;
+  padding: 0.1em 0.5em;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  vertical-align: 0.1em;
 }
 .inline-hint {
   margin: -4px 0 0;
@@ -846,9 +890,14 @@ label {
   font-size: 1.15rem;
 }
 .coach__empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   color: var(--ink-soft);
-  margin: 0;
   font-size: 0.95rem;
+}
+.coach__empty p {
+  margin: 0;
 }
 .tabs {
   display: flex;
@@ -876,9 +925,21 @@ label {
 .thinking {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   color: var(--ink-soft);
   margin: 4px 0;
+}
+.grill-intro {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+.grill-intro p {
+  margin: 0;
 }
 .dots {
   display: inline-flex;
@@ -1010,7 +1071,55 @@ label {
   white-space: nowrap;
 }
 
+/* ---------- Stickers ---------- */
+
+.sticker {
+  display: block;
+  flex: none;
+  max-width: none;
+  height: auto;
+  user-select: none;
+}
+.sticker--join {
+  width: 132px;
+  margin-bottom: -6px;
+}
+.sticker--brand {
+  width: 28px;
+}
+.sticker--done {
+  width: 34px;
+}
+.sticker--step {
+  width: 64px;
+}
+.sticker--point {
+  width: 72px;
+}
+.sticker--thinking {
+  width: 48px;
+}
+.sticker--avatar,
+.sticker--error {
+  width: 44px;
+}
+/* The stickers are black, so give them a white edge like a real sticker when the page is dark. */
+@media (prefers-color-scheme: dark) {
+  .sticker {
+    filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
+  }
+}
+
 @media (max-width: 520px) {
+  .sticker--join {
+    width: 92px;
+  }
+  .sticker--step {
+    width: 44px;
+  }
+  .sticker--point {
+    width: 56px;
+  }
   .hide-narrow,
   .topbar__progress {
     display: none;
@@ -1023,5 +1132,11 @@ label {
   }
   .join__row {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 360px) {
+  .sticker--step {
+    display: none;
   }
 }
