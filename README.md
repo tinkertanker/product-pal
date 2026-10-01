@@ -4,6 +4,8 @@ A single-activity web app for a hackathon. Participants join with a workshop cod
 
 What a participant writes is saved in their browser's `localStorage`, and a copy of their progress is sent quietly to the server (under a made-up nickname such as "Coral Otter", with no name or account) so the facilitator can see it on `/admin` and help them along. The join screen tells participants this and asks them to use made-up or anonymised details.
 
+Adapted from [Metaskills Institute](https://metaskills.sg/).
+
 ## Quick start
 
 ```sh
@@ -86,6 +88,6 @@ Check the setup without deploying by running `npx wrangler deploy --dry-run` aft
 
 ## Credits
 
-- The first version of this activity was built by the [Metaskills Institute](https://metaskills.sg/).
+- Adapted from [Metaskills Institute](https://metaskills.sg/), who built the first version of this activity.
 - Frameworks and videos: [Product Thinking 101](https://www.idg.gov.sg/product-thinking/), Institute of Digital Government.
 - The grilling prompt is adapted from Matt Pocock's *grilling* skill (MIT): https://github.com/mattpocock/skills
