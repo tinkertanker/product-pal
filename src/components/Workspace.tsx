@@ -405,6 +405,10 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
           <a href={IDG_URL} target="_blank" rel="noreferrer" title={IDG_CREDIT}>
             Institute of Digital Government
           </a>
+          . First version by the{' '}
+          <a href="https://metaskills.sg/" target="_blank" rel="noreferrer">
+            Metaskills Institute
+          </a>
           .
         </p>
       </footer>

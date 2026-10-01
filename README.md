@@ -86,5 +86,6 @@ Check the setup without deploying by running `npx wrangler deploy --dry-run` aft
 
 ## Credits
 
+- The first version of this activity was built by the [Metaskills Institute](https://metaskills.sg/).
 - Frameworks and videos: [Product Thinking 101](https://www.idg.gov.sg/product-thinking/), Institute of Digital Government.
 - The grilling prompt is adapted from Matt Pocock's *grilling* skill (MIT): https://github.com/mattpocock/skills
