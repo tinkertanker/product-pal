@@ -3,7 +3,7 @@
 import {
   COACH_STEP_IDS,
   currentJudgement,
-  filledEnough,
+  nothingLeftEmpty,
   isStepComplete,
   type Canvas,
   type CoachStepId,
@@ -27,9 +27,9 @@ export function stepStatus(canvas: Canvas, id: StepId, mode: CompletionMode, che
   return currentJudgement(canvas, id) ? 'almost' : 'todo';
 }
 
-/** The checker only looks at a step once the ordinary length rule is met. */
+/** The checker looks at a step once no required box is empty. It judges quality itself. */
 export function canCheck(canvas: Canvas, id: StepId): id is CoachStepId {
-  return isCoachStep(id) && filledEnough(canvas, id);
+  return isCoachStep(id) && nothingLeftEmpty(canvas, id);
 }
 
 /** Run the checker on Next when the current text has not been looked at yet. */

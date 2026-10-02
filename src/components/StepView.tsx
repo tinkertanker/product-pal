@@ -100,7 +100,7 @@ export function StepView({ step, canvas, onField, canChallenge, busy, onChalleng
     return <FieldInput key={id} stepId={step.id} field={field} value={value(id)} onChange={(v) => onField(id, v)} className={className} />;
   };
 
-  const hint = judgeOn && !canCheck ? 'Finish the boxes above to check your step' : !canChallenge ? 'Write a few words first' : '';
+  const hint = judgeOn && !canCheck ? 'Fill in every box above to check your step' : !canChallenge ? 'Write a few words first' : '';
 
   let body;
   if (step.id === 'problem') {

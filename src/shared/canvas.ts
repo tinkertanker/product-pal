@@ -111,21 +111,30 @@ export type CompletionMode = { judge: boolean };
  * text. Otherwise (or for the build step) the simple length rule applies.
  */
 export function isStepComplete(canvas: Canvas, stepId: StepId, mode: CompletionMode = { judge: false }): boolean {
-  if (stepId !== 'build' && mode.judge) return filledEnough(canvas, stepId) && currentJudgement(canvas, stepId)?.pass === true;
+  if (stepId !== 'build' && mode.judge) return nothingLeftEmpty(canvas, stepId) && currentJudgement(canvas, stepId)?.pass === true;
   return filledEnough(canvas, stepId);
 }
 
 /** The length rule: every required box has something real in it. */
-export function filledEnough(canvas: Canvas, stepId: StepId): boolean {
-  if (stepId === 'build') return nonSpaceLength(canvas.build.prompt) >= MIN_FIELD;
+export function filledEnough(canvas: Canvas, stepId: StepId, min: number = MIN_FIELD): boolean {
+  if (stepId === 'build') return nonSpaceLength(canvas.build.prompt) >= min;
   const step = getStep(stepId);
   if (stepId === 'why') {
-    const filled = canvas.why.whys.filter((w) => nonSpaceLength(w) >= MIN_FIELD).length;
-    return filled >= 3 && nonSpaceLength(canvas.why.statement) >= MIN_FIELD;
+    const filled = canvas.why.whys.filter((w) => nonSpaceLength(w) >= min).length;
+    return filled >= 3 && nonSpaceLength(canvas.why.statement) >= min;
   }
   return step.fields
     .filter((f) => f.required)
-    .every((f) => nonSpaceLength(getField(canvas, stepId, f.id)) >= MIN_FIELD);
+    .every((f) => nonSpaceLength(getField(canvas, stepId, f.id)) >= min);
+}
+
+/**
+ * Every required box has at least something in it. This is all the AI judge
+ * needs before it looks: short answers such as "1 out of 2" are fine, and the
+ * judge, not a character count, decides whether they are good enough.
+ */
+export function nothingLeftEmpty(canvas: Canvas, stepId: StepId): boolean {
+  return filledEnough(canvas, stepId, 1);
 }
 
 /** The step's main field has enough in it for the coach to say something useful. */

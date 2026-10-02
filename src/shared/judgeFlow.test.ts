@@ -41,6 +41,15 @@ describe('canCheck and needsAutoCheck', () => {
     expect(canCheck(filledCanvas(), 'idea')).toBe(true);
     expect(canCheck(filledCanvas(), 'build')).toBe(false);
   });
+
+  it('lets short but real answers through to the checker', () => {
+    const c = filledCanvas();
+    c.assumption.test = 'by papers';
+    c.assumption.threshold = '1 out of 2';
+    expect(canCheck(c, 'assumption')).toBe(true);
+    c.assumption.threshold = '   ';
+    expect(canCheck(c, 'assumption')).toBe(false);
+  });
   it('auto-checks only unjudged, filled, non-running steps with the checker on', () => {
     const c = filledCanvas();
     expect(needsAutoCheck(c, 'idea', on, false)).toBe(true);
