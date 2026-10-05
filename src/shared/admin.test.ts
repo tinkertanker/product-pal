@@ -39,27 +39,36 @@ describe('checkAdminAuth', () => {
 describe('rows', () => {
   it('turns a sync into the columns to store', () => {
     const canvas = emptyCanvas();
-    canvas.build.prompt = '  Build this.  ';
-    const row = syncRowFrom({ code: 'x', clientId: 'abc', canvas, done: ['idea', 'why'] }, 99);
-    expect(row).toMatchObject({ client_id: 'abc', nickname: nicknameFor('abc'), build_prompt_length: 11, now: 99, done: '["idea","why"]' });
-    expect(JSON.parse(row.canvas).build.prompt).toBe('  Build this.  ');
+    canvas.brief.document = '  Build this.  ';
+    canvas.meta = { joinedAt: 5, firstInputAt: 6 };
+    const row = syncRowFrom({ code: 'x', clientId: 'abc', canvas, done: ['who', 'why'] }, 99);
+    expect(row).toMatchObject({ client_id: 'abc', nickname: nicknameFor('abc'), build_prompt_length: 11, now: 99, done: '["who","why"]' });
+    expect(JSON.parse(row.canvas).brief.document).toBe('  Build this.  ');
+    expect(JSON.parse(row.canvas).meta).toEqual({ joinedAt: 5, firstInputAt: 6 });
   });
   it('turns a stored row into a summary, dropping junk from done', () => {
     const summary = rowToSummary({
       client_id: 'abc',
       nickname: 'Coral Otter',
-      done: '["why","idea","nonsense",5]',
+      done: '["why","who","nonsense",5]',
       build_prompt_length: 12,
       created_at: 1,
       updated_at: 2,
     });
-    expect(summary).toEqual({ clientId: 'abc', nickname: 'Coral Otter', done: ['idea', 'why'], buildPromptLength: 12, updatedAt: 2, createdAt: 1 });
+    expect(summary).toEqual({ clientId: 'abc', nickname: 'Coral Otter', done: ['who', 'why'], buildPromptLength: 12, updatedAt: 2, createdAt: 1 });
+    // Rows written by the first version still read.
+    expect(rowToSummary({ client_id: 'a', nickname: 'n', done: '["idea","problem","build"]', build_prompt_length: 0, created_at: 0, updated_at: 0 }).done).toEqual(['who', 'why', 'brief']);
     expect(rowToSummary({ client_id: 'a', nickname: 'n', done: 'not json', build_prompt_length: 0, created_at: 0, updated_at: 0 }).done).toEqual([]);
   });
   it('reads a stored canvas back, tolerating damage', () => {
     const canvas = emptyCanvas();
-    canvas.idea.who = 'nurses';
-    expect(canvasFromRow(JSON.stringify(canvas)).idea.who).toBe('nurses');
-    expect(canvasFromRow('{oops').idea.who).toBe('');
+    canvas.who.who = 'nurses';
+    expect(canvasFromRow(JSON.stringify(canvas)).who.who).toBe('nurses');
+    expect(canvasFromRow('{oops').who.who).toBe('');
+    // A canvas saved by the first version is upgraded.
+    const old = { idea: { who: 'old nurses', oneLine: 'A summary' }, build: { prompt: 'Old prompt' } };
+    const upgraded = canvasFromRow(JSON.stringify(old));
+    expect(upgraded.who).toMatchObject({ who: 'old nurses', parkedIdea: 'A summary' });
+    expect(upgraded.brief.document).toBe('Old prompt');
   });
 });

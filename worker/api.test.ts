@@ -88,20 +88,20 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('/api/judge', () => {
   const judgeBody = (over: Record<string, unknown> = {}) => ({
-    code: 'm82t7', clientId: 'c1', step: 'problem', canvas: filledCanvas(), ...over,
+    code: 'm82t7', clientId: 'c1', step: 'who', canvas: filledCanvas(), ...over,
   });
   const jevReply = (p: number, over: Record<string, number> = {}) =>
     Response.json({
       model: 'jev-1.13.0',
-      answers: Object.fromEntries(checksFor('problem').map((c) => [c.id, { type: 'noul', noul: over[c.id] ?? p }])),
+      answers: Object.fromEntries(checksFor('who').map((c) => [c.id, { type: 'noul', noul: over[c.id] ?? p }])),
       usage: { input_tokens: 1, output_tokens: 1 },
     });
 
   it('needs a right code, a coach step and a valid canvas', async () => {
     const e = env({ TYPESAFE_API_KEY: 'k' });
     expect((await handle(req('POST', '/api/judge', judgeBody({ code: 'bad' })), e)).status).toBe(401);
-    expect((await handle(req('POST', '/api/judge', judgeBody({ step: 'build' })), e)).status).toBe(400);
-    expect((await handle(req('POST', '/api/judge', judgeBody({ canvas: { idea: { who: 1 } } })), e)).status).toBe(400);
+    expect((await handle(req('POST', '/api/judge', judgeBody({ step: 'idea' })), e)).status).toBe(400);
+    expect((await handle(req('POST', '/api/judge', judgeBody({ canvas: { who: { who: 1 } } })), e)).status).toBe(400);
     expect((await handle(req('POST', '/api/judge', '{oops'), e)).status).toBe(400);
     expect((await handle(req('GET', '/api/judge'), e)).status).toBe(404);
   });
@@ -118,8 +118,9 @@ describe('/api/judge', () => {
     const res = await handle(req('POST', '/api/judge', judgeBody({ clarifications: ['I timed it.'] })), env({ TYPESAFE_API_KEY: 'k' }));
     expect(res.status).toBe(200);
     const body = await json(res);
-    expect(body).toMatchObject({ step: 'problem', pass: true });
-    expect(body.checks.map((c: { id: string }) => c.id)).toEqual(checksFor('problem').map((c) => c.id));
+    expect(body).toMatchObject({ step: 'who', pass: true });
+    expect(body.checks.map((c: { id: string }) => c.id)).toEqual(checksFor('who').map((c) => c.id));
+    expect(body.checks.every((c: { fix?: string }) => typeof c.fix === 'string' && c.fix.length > 0)).toBe(true);
     expect(body.fingerprint).toMatch(/^[0-9a-f]{8}$/);
     expect(typeof body.at).toBe('number');
 
@@ -129,6 +130,8 @@ describe('/api/judge', () => {
     const sent = JSON.parse(init.body as string);
     expect(sent.model).toBe('jev-latest');
     expect(sent.state.clarifications).toEqual(['I timed it.']);
+    expect(Object.keys(sent.state.fields)).toEqual(['who', 'pain', 'evidence']);
+    expect(init.body as string).not.toContain('A summary of what changed since the last shift');
     expect(Object.values(sent.questions as Record<string, { type: string }>).every((q) => q.type === 'noul')).toBe(true);
   });
 
@@ -170,18 +173,46 @@ describe('/api/judge', () => {
 
 describe('coach clarifications', () => {
   it('rejects malformed clarifications with 400', async () => {
-    const body = { code: 'M82T7', clientId: 'c', mode: 'build', canvas: emptyCanvas(), clarifications: { nope: ['x'] } };
+    const body = { code: 'M82T7', clientId: 'c', mode: 'brief', canvas: emptyCanvas(), clarifications: { nope: ['x'] } };
     const res = await handle(req('POST', '/api/coach', body), env());
     expect(res.status).toBe(400);
     expect((await json(res)).error).toContain('clarifications.nope');
   });
-  it('passes good clarifications into the build prompt sent to the LLM', async () => {
+  it('passes good clarifications into the brief prompt sent to the LLM', async () => {
     const fetchMock = vi.fn(async () => new Response('data: [DONE]\n\n'));
     vi.stubGlobal('fetch', fetchMock);
-    const body = { code: 'M82T7', clientId: 'c', mode: 'build', canvas: filledCanvas(), clarifications: { problem: ['It is only ward 4.'] } };
+    const body = { code: 'M82T7', clientId: 'c', mode: 'brief', canvas: filledCanvas(), clarifications: { why: ['It is only ward 4.'] } };
     await (await handle(req('POST', '/api/coach', body), env())).text();
     const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    const sent = JSON.parse(init.body as string) as { messages: { content: string }[]; max_tokens: number };
     expect(init.body as string).toContain('It is only ward 4.');
+    expect(init.body as string).toContain('```fit');
+    expect(sent.max_tokens).toBe(16000);
+  });
+  it('builds each mode\'s prompt from the new request shapes', async () => {
+    const fetchMock = vi.fn(async () => new Response('data: [DONE]\n\n'));
+    vi.stubGlobal('fetch', fetchMock);
+    const canvas = filledCanvas();
+    canvas.brief.document = 'A brief to review.';
+    const bodies = [
+      { mode: 'nudge', step: 'why', failed: ['goes_deeper'] },
+      { mode: 'questions', step: 'bet', messages: [{ role: 'user', content: 'Ask me questions about my riskiest bet.' }] },
+      { mode: 'statement' },
+      { mode: 'assumptions' },
+      { mode: 'review' },
+    ];
+    for (const extra of bodies) {
+      const res = await handle(req('POST', '/api/coach', { code: 'M82T7', clientId: 'c', canvas, ...extra }), env());
+      expect(res.status, extra.mode).toBe(502);
+      await res.text();
+      const init = (fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit])[1];
+      expect(init.body as string).toContain(`Mode: ${extra.mode}`);
+    }
+  });
+  it('refuses a nudge with check ids that are not on the step, and the old modes', async () => {
+    const bad = { code: 'M82T7', clientId: 'c', mode: 'nudge', step: 'who', failed: ['goes_deeper'], canvas: emptyCanvas() };
+    expect((await handle(req('POST', '/api/coach', bad), env())).status).toBe(400);
+    expect((await handle(req('POST', '/api/coach', { ...bad, mode: 'grill' }), env())).status).toBe(400);
   });
 });
 
@@ -189,7 +220,7 @@ describe('coach clarifications', () => {
 
 describe('/api/sync', () => {
   const syncBody = (over: Record<string, unknown> = {}) => ({
-    code: 'm82t7', clientId: 'abc-123', canvas: filledCanvas(), done: ['idea', 'why'], ...over,
+    code: 'm82t7', clientId: 'abc-123', canvas: filledCanvas(), done: ['who', 'why'], ...over,
   });
 
   it('stores the participant with their nickname and done steps, and answers 204', async () => {
@@ -197,19 +228,38 @@ describe('/api/sync', () => {
     const res = await handle(req('POST', '/api/sync', syncBody()), env({ DB: db }));
     expect(res.status).toBe(204);
     const row = participants.get('abc-123');
-    expect(row).toMatchObject({ nickname: nicknameFor('abc-123'), done: '["idea","why"]', build_prompt_length: 0 });
-    expect(JSON.parse(row?.canvas as string).idea.who).toBe('new nurses on night shift');
+    expect(row).toMatchObject({ nickname: nicknameFor('abc-123'), done: '["who","why"]', build_prompt_length: 0 });
+    expect(JSON.parse(row?.canvas as string).who.who).toBe('New nurses on night shift');
+  });
+
+  it('keeps the chats, judgements and meta in what it stores', async () => {
+    const { db, participants } = fakeDb();
+    const canvas = filledCanvas();
+    canvas.chats.who = [{ role: 'user', content: 'Ask me questions about my person and their pain.' }];
+    canvas.judgements.who = { step: 'who', pass: false, fingerprint: 'abc', at: 5, checks: [{ id: 'specific_user', label: 'Names one person or role', probability: 0.1, pass: false, fix: 'Name one person or role.' }] };
+    canvas.meta = { joinedAt: 1000, firstInputAt: 61000 };
+    await handle(req('POST', '/api/sync', syncBody({ canvas })), env({ DB: db }));
+    const stored = JSON.parse(participants.get('abc-123')?.canvas as string);
+    expect(stored.chats.who).toHaveLength(1);
+    expect(stored.judgements.who.checks[0].fix).toBe('Name one person or role.');
+    expect(stored.meta).toEqual({ joinedAt: 1000, firstInputAt: 61000 });
+  });
+
+  it('maps the first version\'s step ids in done', async () => {
+    const { db, participants } = fakeDb();
+    await handle(req('POST', '/api/sync', syncBody({ done: ['idea', 'problem', 'build'] })), env({ DB: db }));
+    expect(participants.get('abc-123')?.done).toBe('["who","why","brief"]');
   });
 
   it('updates the same row on the next sync and keeps created_at', async () => {
     const { db, participants } = fakeDb();
     vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000);
     const canvas = filledCanvas();
-    canvas.build.prompt = 'Build it please.';
+    canvas.brief.document = 'Build it please.';
     await handle(req('POST', '/api/sync', syncBody()), env({ DB: db }));
-    await handle(req('POST', '/api/sync', syncBody({ canvas, done: ['idea', 'build'] })), env({ DB: db }));
+    await handle(req('POST', '/api/sync', syncBody({ canvas, done: ['who', 'brief'] })), env({ DB: db }));
     expect(participants.size).toBe(1);
-    expect(participants.get('abc-123')).toMatchObject({ created_at: 1000, updated_at: 2000, build_prompt_length: 16, done: '["idea","build"]' });
+    expect(participants.get('abc-123')).toMatchObject({ created_at: 1000, updated_at: 2000, build_prompt_length: 16, done: '["who","brief"]' });
     vi.restoreAllMocks();
   });
 
@@ -217,7 +267,7 @@ describe('/api/sync', () => {
     const e = env({ DB: fakeDb().db });
     expect((await handle(req('POST', '/api/sync', syncBody({ code: 'bad' })), e)).status).toBe(401);
     expect((await handle(req('POST', '/api/sync', syncBody({ done: ['nope'] })), e)).status).toBe(400);
-    expect((await handle(req('POST', '/api/sync', syncBody({ canvas: { chats: { idea: [{ role: 'user', content: 'x'.repeat(4001) }] } } })), e)).status).toBe(400);
+    expect((await handle(req('POST', '/api/sync', syncBody({ canvas: { chats: { who: [{ role: 'user', content: 'x'.repeat(4001) }] } } })), e)).status).toBe(400);
     expect((await handle(req('POST', '/api/sync', '{oops'), e)).status).toBe(400);
   });
 
@@ -301,28 +351,41 @@ describe('/api/admin/*', () => {
 
   it('lists participants, newest activity first, without their canvases', async () => {
     const { e, participants } = setup();
-    participants.set('a', { client_id: 'a', nickname: 'Amber Otter', canvas: '{}', done: '["idea"]', build_prompt_length: 0, created_at: 1, updated_at: 10 });
+    participants.set('a', { client_id: 'a', nickname: 'Amber Otter', canvas: '{}', done: '["who"]', build_prompt_length: 0, created_at: 1, updated_at: 10 });
     participants.set('b', { client_id: 'b', nickname: 'Brave Panda', canvas: '{}', done: '["idea","why","build"]', build_prompt_length: 500, created_at: 2, updated_at: 20 });
     const res = await handle(req('GET', '/api/admin/participants', undefined, admin()), e);
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.participants.map((p: { clientId: string }) => p.clientId)).toEqual(['b', 'a']);
-    expect(body.participants[0]).toEqual({ clientId: 'b', nickname: 'Brave Panda', done: ['idea', 'why', 'build'], buildPromptLength: 500, updatedAt: 20, createdAt: 2 });
+    expect(body.participants[0]).toEqual({ clientId: 'b', nickname: 'Brave Panda', done: ['who', 'why', 'brief'], buildPromptLength: 500, updatedAt: 20, createdAt: 2 });
     expect(JSON.stringify(body)).not.toContain('canvas');
   });
 
   it('shows one participant with their canvas, and 404 for a stranger', async () => {
     const { e } = setup();
     const canvas = filledCanvas();
-    canvas.chats.idea = [{ role: 'user', content: 'Grill me on my idea.' }, { role: 'user', content: 'It is for ward 4.' }];
-    await handle(req('POST', '/api/sync', { code: 'M82T7', clientId: 'client/with spaces', canvas, done: ['idea'] }), e);
+    canvas.chats.who = [{ role: 'user', content: 'Ask me questions about my person and their pain.' }, { role: 'user', content: 'It is for ward 4.' }];
+    canvas.meta = { joinedAt: 1000, firstInputAt: 61000 };
+    await handle(req('POST', '/api/sync', { code: 'M82T7', clientId: 'client/with spaces', canvas, done: ['who'] }), e);
     const res = await handle(req('GET', `/api/admin/participants/${encodeURIComponent('client/with spaces')}`, undefined, admin()), e);
     expect(res.status).toBe(200);
     const body = await json(res);
-    expect(body.participant).toMatchObject({ clientId: 'client/with spaces', nickname: nicknameFor('client/with spaces'), done: ['idea'] });
-    expect(body.canvas.idea.who).toBe('new nurses on night shift');
-    expect(body.canvas.chats.idea[1].content).toBe('It is for ward 4.');
+    expect(body.participant).toMatchObject({ clientId: 'client/with spaces', nickname: nicknameFor('client/with spaces'), done: ['who'] });
+    expect(body.canvas.who.who).toBe('New nurses on night shift');
+    expect(body.canvas.chats.who[1].content).toBe('It is for ward 4.');
+    expect(body.canvas.meta).toEqual({ joinedAt: 1000, firstInputAt: 61000 });
     expect((await handle(req('GET', '/api/admin/participants/nobody', undefined, admin()), e)).status).toBe(404);
+  });
+
+  it('upgrades a participant saved by the first version when the facilitator opens them', async () => {
+    const { e, participants } = setup();
+    const old = { idea: { who: 'old nurses', oneLine: 'A summary' }, build: { prompt: 'Old prompt', platform: 'codex' }, chats: { idea: [{ role: 'user', content: 'hi' }] } };
+    participants.set('old', { client_id: 'old', nickname: 'Old Otter', canvas: JSON.stringify(old), done: '["idea","build"]', build_prompt_length: 10, created_at: 1, updated_at: 2 });
+    const body = await json(await handle(req('GET', '/api/admin/participants/old', undefined, admin()), e));
+    expect(body.participant.done).toEqual(['who', 'brief']);
+    expect(body.canvas.who).toMatchObject({ who: 'old nurses', parkedIdea: 'A summary' });
+    expect(body.canvas.brief).toMatchObject({ document: 'Old prompt', platform: 'codex' });
+    expect(body.canvas.chats.who).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
   it('reads and changes settings, partial booleans only', async () => {

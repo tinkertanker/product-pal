@@ -2,19 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { emptyCanvas, setField, type ChatMessage } from './canvas';
 import { filledCanvas } from './fixtures';
 import { SYNC_MAX_BYTES, buildSyncRequest, serialiseSync } from './syncBody';
-import { LIMITS } from './validation';
+import { LIMITS, validateSyncRequest } from './validation';
 
 const chat = (n: number, size = 10): ChatMessage[] =>
   Array.from({ length: n }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: 'x'.repeat(size) }));
 
 describe('buildSyncRequest', () => {
-  it('keeps chats and judgements, unlike a coach request', () => {
-    const canvas = { ...filledCanvas(), chats: { ...emptyCanvas().chats, idea: chat(4) } };
-    canvas.judgements = { idea: { step: 'idea', pass: true, checks: [], fingerprint: 'abc', at: 5 } };
-    const req = buildSyncRequest({ code: 'M82T7', clientId: 'c1', canvas, done: ['idea'] });
-    expect(req.canvas.chats.idea).toHaveLength(4);
-    expect(req.canvas.judgements.idea?.fingerprint).toBe('abc');
-    expect(req.done).toEqual(['idea']);
+  it('keeps chats, judgements and meta, unlike a coach request', () => {
+    const canvas = { ...filledCanvas(), chats: { ...emptyCanvas().chats, who: chat(4) } };
+    canvas.judgements = { who: { step: 'who', pass: true, checks: [], fingerprint: 'abc', at: 5 } };
+    canvas.meta = { joinedAt: 111, firstInputAt: 222 };
+    const req = buildSyncRequest({ code: 'M82T7', clientId: 'c1', canvas, done: ['who'] });
+    expect(req.canvas.chats.who).toHaveLength(4);
+    expect(req.canvas.judgements.who?.fingerprint).toBe('abc');
+    expect(req.canvas.meta).toEqual({ joinedAt: 111, firstInputAt: 222 });
+    expect(req.done).toEqual(['who']);
     expect(req.clientId).toBe('c1');
   });
   it('clamps each step chat to the server limits', () => {
@@ -25,9 +27,22 @@ describe('buildSyncRequest', () => {
     expect(req.canvas.chats.why[0]?.role).toBe('user');
   });
   it('clamps long fields', () => {
-    const canvas = setField(emptyCanvas(), 'idea', 'pain', 'y'.repeat(LIMITS.field + 100));
+    const canvas = setField(emptyCanvas(), 'who', 'pain', 'y'.repeat(LIMITS.field + 100));
     const req = buildSyncRequest({ code: 'c', clientId: 'c', canvas, done: [] });
-    expect(req.canvas.idea.pain).toHaveLength(LIMITS.field);
+    expect(req.canvas.who.pain).toHaveLength(LIMITS.field);
+  });
+});
+
+describe('a built sync request', () => {
+  it('passes the server\'s own validation unchanged', () => {
+    const canvas = filledCanvas();
+    canvas.chats.why = chat(4);
+    canvas.meta = { joinedAt: 9, firstInputAt: 10 };
+    const req = buildSyncRequest({ code: 'c', clientId: 'c', canvas, done: ['who', 'why'] });
+    const checked = validateSyncRequest(JSON.parse(JSON.stringify(req)));
+    expect(checked.ok && checked.value.canvas.meta).toEqual({ joinedAt: 9, firstInputAt: 10 });
+    expect(checked.ok && checked.value.canvas.chats.why).toHaveLength(4);
+    expect(checked.ok && checked.value.canvas.who).toEqual(canvas.who);
   });
 });
 
@@ -37,7 +52,7 @@ describe('serialiseSync', () => {
     expect(out.ok).toBe(true);
   });
   it('refuses a body over the cap', () => {
-    const big = { ...emptyCanvas(), chats: Object.fromEntries(['idea', 'why', 'problem', 'metric', 'assumption', 'experience', 'build'].map((id) => [id, chat(LIMITS.messages, LIMITS.message)])) } as ReturnType<typeof emptyCanvas>;
+    const big = { ...emptyCanvas(), chats: Object.fromEntries(['who', 'why', 'success', 'bet', 'brief'].map((id) => [id, chat(LIMITS.messages, LIMITS.message)])) } as ReturnType<typeof emptyCanvas>;
     const out = serialiseSync(buildSyncRequest({ code: 'c', clientId: 'c', canvas: big, done: [] }));
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.bytes).toBeGreaterThan(SYNC_MAX_BYTES);

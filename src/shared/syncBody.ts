@@ -14,7 +14,7 @@ export function buildSyncRequest(input: { code: string; clientId: string; canvas
   return {
     code: input.code,
     clientId: input.clientId,
-    canvas: { ...base, chats, judgements: input.canvas.judgements },
+    canvas: { ...base, chats, judgements: input.canvas.judgements, meta: input.canvas.meta },
     done: input.done,
   };
 }

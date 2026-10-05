@@ -22,8 +22,9 @@ const post = (path: string, body: unknown, headers: Record<string, string> = {})
 const coachBody = (over: Record<string, unknown> = {}) => ({
   code: 'm82t7',
   clientId: 'client-1',
-  mode: 'challenge',
-  step: 'idea',
+  mode: 'nudge',
+  step: 'who',
+  failed: ['specific_user'],
   canvas: emptyCanvas(),
   ...over,
 });
