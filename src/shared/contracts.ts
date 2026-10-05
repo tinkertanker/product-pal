@@ -33,7 +33,7 @@ export type Clarifications = Partial<Record<CoachStepId, string[]>>;
 export const CLARIFICATION_MAX_CHARS = 4000;
 export const CLARIFICATIONS_PER_STEP = 10;
 
-const COACH_STEPS: readonly CoachStepId[] = ['idea', 'why', 'problem', 'metric', 'assumption', 'experience'];
+const COACH_STEPS: readonly CoachStepId[] = ['who', 'why', 'success', 'bet', 'brief'];
 
 /**
  * Each step's participant messages from its grill chat, minus the first one
@@ -69,6 +69,8 @@ export type JudgeCheck = {
   /** Jev's probability that the check is met (0–1). */
   probability: number;
   pass: boolean;
+  /** One short line saying how to fix a miss. Shown only when the check fails. */
+  fix?: string;
 };
 
 export type Judgement = {
@@ -151,3 +153,22 @@ export function nicknameFor(clientId: string): string {
   const h = parseInt(fingerprint(clientId), 16);
   return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[Math.floor(h / ADJECTIVES.length) % ANIMALS.length]}`;
 }
+
+// ---------------------------------------------------------------------------
+// Coach modes (POST /api/coach). The server owns every prompt; the client
+// only names a mode.
+// ---------------------------------------------------------------------------
+
+/**
+ * - nudge:       after a failed check, one short nudge and one question per miss (needs `step`, `failed`)
+ * - questions:   the coach asks one question at a time about a step (needs `step`, `messages`)
+ * - statement:   drafts the problem statement from screens 1 and 2
+ * - assumptions: suggests three candidate riskiest assumptions
+ * - brief:       writes the product brief (a ```fit block first, then the document)
+ * - review:      critiques the participant's edited brief
+ */
+export const COACH_MODES = ['nudge', 'questions', 'statement', 'assumptions', 'brief', 'review'] as const;
+export type CoachMode = (typeof COACH_MODES)[number];
+
+/** Extra field on a `nudge` request: ids of the checks that failed, as returned by /api/judge. */
+export type NudgeExtras = { failed: string[] };
