@@ -3,7 +3,7 @@ import { parsePublicSettings, requestJudgement, streamCoach, UnauthorisedError, 
 import { endMarker } from './shared/coachStream';
 import { emptyCanvas } from './shared/canvas';
 
-const body: CoachBody = { code: 'M82T7', clientId: 'c', mode: 'build', canvas: emptyCanvas() };
+const body: CoachBody = { code: 'M82T7', clientId: 'c', mode: 'brief', canvas: emptyCanvas() };
 
 /** A text response sent in the given pieces. */
 const streamed = (...pieces: string[]) => {
@@ -69,9 +69,9 @@ describe('parsePublicSettings', () => {
 });
 
 describe('requestJudgement', () => {
-  const request = { code: 'M82T7', clientId: 'c', step: 'idea', canvas: emptyCanvas() } as const;
+  const request = { code: 'M82T7', clientId: 'c', step: 'who', canvas: emptyCanvas() } as const;
   const reply = (status: number, json: unknown) => vi.stubGlobal('fetch', async () => new Response(JSON.stringify(json), { status }));
-  const judgement = { step: 'idea', pass: true, checks: [], fingerprint: 'abc', at: 1 };
+  const judgement = { step: 'who', pass: true, checks: [], fingerprint: 'abc', at: 1 };
 
   it('returns the judgement', async () => {
     reply(200, judgement);

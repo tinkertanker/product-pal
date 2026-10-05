@@ -1,57 +1,70 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { UnauthorisedError, requestJudgement, streamCoach, type CoachBody, type CoachResult } from '../api';
 import {
-  canChallenge,
   canvasToMarkdown,
   completedCount,
+  currentJudgement,
   emptyCanvas,
   isStepComplete,
-  missingCoachSteps,
+  missingBeforeBrief,
   setField,
   type Canvas,
   type ChatMessage,
-  type CoachStepId,
   type StepId,
 } from '../shared/canvas';
-import { clarificationsFrom, nicknameFor, type PublicSettings } from '../shared/contracts';
-import { canCheck, isCoachStep, judgeView, needsAutoCheck } from '../shared/judgeFlow';
-import { grillOpener } from '../shared/prompts';
-import { IDG_CREDIT, IDG_URL, STEPS, getMainField } from '../shared/steps';
-import { canvasForRequest, clampMessages, type CoachMode } from '../shared/validation';
-import { clearState, getClientId, loadState, saveState } from '../storage';
-import { BuildStep } from './BuildStep';
+import { parseAssumptions, parseFit } from '../shared/coachOutput';
+import { questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
+import { clarificationsFrom, nicknameFor, type CoachMode, type Judgement, type PublicSettings } from '../shared/contracts';
+import { emptyBoxesMessage, failedCheckIds, judgeView, needsAutoCheck, shouldNudge, canCheck } from '../shared/judgeFlow';
+import { IDG_CREDIT, IDG_URL, STEPS } from '../shared/steps';
+import { canvasForRequest, clampMessages } from '../shared/validation';
+import { clearState, getClientId, loadState, saveState, type SavedState } from '../storage';
+import { BriefStep } from './BriefStep';
 import { CoachPanel, type PanelMode } from './CoachPanel';
 import { ConfirmDialog, type ConfirmState } from './ConfirmDialog';
 import { downloadText } from './download';
+import type { NudgeView } from './JudgeCard';
 import { MobileProgress, Stepper } from './Stepper';
 import { Sticker } from './Sticker';
-import { StepHeader, StepView } from './StepView';
+import { CheckBar, StepHeader, StepView } from './StepView';
 import { useSync } from './useSync';
 
 type Busy = { kind: CoachMode; step: StepId } | null;
+
+/** A nudge as held in memory: `done` is false while the reply is still arriving. */
+type Nudge = { fingerprint: string; text: string; done: boolean };
 
 const CUT_SHORT = 'Your coach ran out of room before finishing, so the end of this reply is missing. Try again for a full answer.';
 
 /** Shown when a reply hits the length limit. The reply itself is kept. */
 const TRUNCATED: Record<CoachMode, string> = {
-  challenge: CUT_SHORT,
-  grill: 'Your coach ran out of room before finishing. Ask it to carry on.',
-  build: 'Your coach ran out of room before finishing your prompt, so the end may be missing. Check the last section, or press Rewrite to try again.',
-  tune: CUT_SHORT,
+  nudge: CUT_SHORT,
+  questions: 'Your coach ran out of room before finishing. Ask it to carry on.',
+  statement: CUT_SHORT,
+  assumptions: CUT_SHORT,
+  brief: 'Your coach ran out of room before finishing your brief, so the end may be missing. Check the last section, or press Rewrite to try again.',
+  review: CUT_SHORT,
 };
 
-const downloadMarkdown = (canvas: Canvas) => downloadText('product-canvas.md', canvasToMarkdown(canvas));
+const downloadMarkdown = (canvas: Canvas) => downloadText('product-brief.md', canvasToMarkdown(canvas));
 
-const JUDGE_ANYWAY = "Your coach hasn't signed off on every step yet. You can still write your prompt, but it may be vaguer. Go ahead?";
-const LENGTH_ANYWAY = "Some steps aren't filled in yet. You can still write your prompt, but it may be vaguer. Go ahead?";
+const without = <T,>(record: Partial<Record<StepId, T>>, id: StepId): Partial<Record<StepId, T>> => {
+  const rest = { ...record };
+  delete rest[id];
+  return rest;
+};
 
 export function Workspace({ code, settings, onUnauthorised }: { code: string; settings: PublicSettings; onUnauthorised: () => void }) {
-  const [initial] = useState(loadState);
+  const [initial] = useState<SavedState>(loadState);
   const [canvas, setCanvas] = useState<Canvas>(initial.canvas);
-  const [challenges, setChallenges] = useState(initial.challenges);
+  const [nudges, setNudges] = useState<Partial<Record<StepId, Nudge>>>(() =>
+    Object.fromEntries(Object.entries(initial.nudges).map(([id, n]) => [id, { ...n, done: true }])),
+  );
   const [stepIndex, setStepIndex] = useState(initial.step);
   const [panelModes, setPanelModes] = useState<Partial<Record<StepId, PanelMode>>>({});
-  const [tune, setTune] = useState('');
+  const [review, setReview] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [gate, setGate] = useState<StepId[] | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<{ step: StepId; message: string } | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -59,19 +72,28 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
-  // The step checker runs on its own, so it never waits for the coach's `busy`.
+  // The step checker and the nudge that follows it run on their own, so they never wait for the coach's `busy`.
   const [checking, setChecking] = useState<ReadonlySet<StepId>>(() => new Set());
   const [judgeErrors, setJudgeErrors] = useState<Partial<Record<StepId, string>>>({});
+  /** Screens where "Check my step" was pressed with boxes empty; the message then follows what is still empty. */
+  const [tried, setTried] = useState<ReadonlySet<StepId>>(() => new Set());
   const checksRunning = useRef(new Set<StepId>());
+  const nudgeAbort = useRef<AbortController | null>(null);
+  const nudgeStarted = useRef<Partial<Record<StepId, string>>>({});
   const generation = useRef(0);
   const canvasRef = useRef(canvas);
   canvasRef.current = canvas;
+  const nudgesRef = useRef(nudges);
+  nudgesRef.current = nudges;
 
   const judgeOn = settings.aiJudge && settings.judgeAvailable;
   const completion = useMemo(() => ({ judge: judgeOn }), [judgeOn]);
   const nickname = useMemo(() => nicknameFor(getClientId()), []);
 
   const step = STEPS[stepIndex] ?? STEPS[0]!;
+  const id = step.id;
+  const stepRef = useRef<StepId>(id);
+  stepRef.current = id;
   const done = completedCount(canvas, completion);
   useSync(
     code,
@@ -79,16 +101,30 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     STEPS.filter((s) => isStepComplete(canvas, s.id, completion)).map((s) => s.id),
   );
 
-  // Autosave, debounced.
+  // Autosave, debounced. Only finished nudges are kept.
   useEffect(() => {
-    const timer = window.setTimeout(() => saveState({ canvas, challenges, step: stepIndex }), 400);
+    const timer = window.setTimeout(() => {
+      const saved: SavedState['nudges'] = {};
+      for (const s of STEPS) {
+        const n = nudges[s.id];
+        if (n?.done && n.text) saved[s.id] = { fingerprint: n.fingerprint, text: n.text };
+      }
+      saveState({ canvas, nudges: saved, step: stepIndex });
+    }, 400);
     return () => window.clearTimeout(timer);
-  }, [canvas, challenges, stepIndex]);
+  }, [canvas, nudges, stepIndex]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      nudgeAbort.current?.abort();
+    },
+    [],
+  );
 
   const goTo = useCallback((index: number) => {
     setStepIndex(index);
+    setGate(null);
     setMoves((n) => n + 1);
   }, []);
 
@@ -99,10 +135,14 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     mainRef.current?.querySelector<HTMLElement>('#step-title')?.focus({ preventScroll: true });
   }, [moves]);
 
-  const update = useCallback((fn: (c: Canvas) => Canvas) => setCanvas(fn), []);
-  const setChat = (id: StepId, fn: (messages: ChatMessage[]) => ChatMessage[]) =>
-    update((c) => ({ ...c, chats: { ...c.chats, [id]: fn(c.chats[id]) } }));
-  const setPanel = (id: StepId, mode: PanelMode) => setPanelModes((p) => ({ ...p, [id]: mode }));
+  /** Every change to the canvas goes through here, so the join and first-typing times are noted once. */
+  const update = useCallback((fn: (c: Canvas) => Canvas) => setCanvas((c) => stampMeta(fn(c), Date.now())), []);
+  // On opening, note the join time only; the first-typing time waits for a real keystroke.
+  useEffect(() => setCanvas((c) => stampJoined(c, Date.now())), []);
+
+  const setChat = (stepId: StepId, fn: (messages: ChatMessage[]) => ChatMessage[]) =>
+    update((c) => ({ ...c, chats: { ...c.chats, [stepId]: fn(c.chats[stepId]) } }));
+  const setPanel = (stepId: StepId, mode: PanelMode) => setPanelModes((p) => ({ ...p, [stepId]: mode }));
 
   /**
    * Run one coach request. Only one at a time. Resolves with the reply, or
@@ -134,128 +174,223 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   }
 
   // ---- Step checker ------------------------------------------------------
-  async function checkStep(id: CoachStepId) {
+
+  /** Ask the checker about a step. Resolves with its verdict, or null if it didn't run or failed. */
+  async function runCheck(stepId: StepId): Promise<Judgement | null> {
     const snapshot = canvasRef.current;
-    if (checksRunning.current.has(id) || !canCheck(snapshot, id)) return;
+    if (checksRunning.current.has(stepId) || !canCheck(snapshot, stepId)) return null;
     const gen = generation.current;
     const publish = () => setChecking(new Set(checksRunning.current));
-    checksRunning.current.add(id);
+    checksRunning.current.add(stepId);
     publish();
-    setJudgeErrors((e) => ({ ...e, [id]: '' }));
+    setJudgeErrors((e) => ({ ...e, [stepId]: '' }));
     try {
       const judgement = await requestJudgement({
         code,
         clientId: getClientId(),
-        step: id,
+        step: stepId,
         canvas: canvasForRequest(snapshot),
-        clarifications: clarificationsFrom(snapshot.chats)[id],
+        clarifications: clarificationsFrom(snapshot.chats)[stepId],
       });
-      if (gen === generation.current) update((c) => ({ ...c, judgements: { ...c.judgements, [id]: judgement } }));
+      if (gen !== generation.current) return null;
+      update((c) => ({ ...c, judgements: { ...c.judgements, [stepId]: judgement } }));
+      // Only the screen the participant is on gets a nudge.
+      const already = nudgeStarted.current[stepId] ?? nudgesRef.current[stepId]?.fingerprint;
+      if (stepRef.current === stepId && shouldNudge(judgement, already)) void startNudge(stepId, judgement, snapshot, gen);
+      return judgement;
     } catch (e) {
       if (e instanceof UnauthorisedError) onUnauthorised();
-      else if (gen === generation.current) setJudgeErrors((all) => ({ ...all, [id]: e instanceof Error ? e.message : "The step checker couldn't answer just now. Please try again in a moment." }));
+      else if (gen === generation.current) setJudgeErrors((all) => ({ ...all, [stepId]: e instanceof Error ? e.message : "The step checker couldn't answer just now. Please try again in a moment." }));
+      return null;
     } finally {
-      checksRunning.current.delete(id);
+      checksRunning.current.delete(stepId);
       publish();
+    }
+  }
+
+  /** "Check my step": say which boxes are empty, or run the checker. */
+  function pressCheck(stepId: StepId) {
+    const missing = emptyBoxesMessage(canvasRef.current, stepId) !== '';
+    setTried((t) => {
+      const next = new Set(t);
+      if (missing) next.add(stepId);
+      else next.delete(stepId);
+      return next;
+    });
+    if (!missing) void runCheck(stepId);
+  }
+
+  /** The coach's reply to a miss: one nudge per judgement, streamed under the card. */
+  async function startNudge(stepId: StepId, judgement: Judgement, snapshot: Canvas, gen: number) {
+    const { fingerprint } = judgement;
+    nudgeStarted.current[stepId] = fingerprint;
+    nudgeAbort.current?.abort();
+    const controller = new AbortController();
+    nudgeAbort.current = controller;
+    const put = (text: string, finished: boolean) => {
+      if (gen === generation.current) setNudges((n) => ({ ...n, [stepId]: { fingerprint, text, done: finished } }));
+    };
+    put('', false);
+    try {
+      const result = await streamCoach(
+        { mode: 'nudge', code, clientId: getClientId(), step: stepId, failed: failedCheckIds(judgement), canvas: canvasForRequest(snapshot) },
+        (text) => put(text, false),
+        controller.signal,
+      );
+      put(result.text, true);
+    } catch (e) {
+      if (e instanceof UnauthorisedError) onUnauthorised();
+      // The nudge is a bonus. If it fails, the card's fix lines are still there; a new check can try again.
+      if (gen === generation.current) setNudges((n) => without(n, stepId));
+      if (nudgeStarted.current[stepId] === fingerprint) delete nudgeStarted.current[stepId];
+    } finally {
+      if (nudgeAbort.current === controller) nudgeAbort.current = null;
     }
   }
 
   /** Next never waits: if this step hasn't been checked yet, the check runs in the background. */
   function next() {
-    if (isCoachStep(step.id) && needsAutoCheck(canvas, step.id, completion, checksRunning.current.has(step.id))) void checkStep(step.id);
+    if (needsAutoCheck(canvas, id, completion, checksRunning.current.has(id))) void runCheck(id);
     goTo(stepIndex + 1);
   }
 
-  // ---- Challenge ---------------------------------------------------------
-  async function challenge() {
-    const id = step.id as CoachStepId;
-    if (busy || !canChallenge(canvas, id)) return;
-    setPanel(id, 'challenge');
-    setChallenges((c) => ({ ...c, [id]: '' }));
-    const result = await run('challenge', id, { step: id, canvas: canvasForRequest(canvas) }, (t) => setChallenges((c) => ({ ...c, [id]: t })));
-    // A reply that broke off is dropped, so its draft can't be used.
-    if (result === null) setChallenges((c) => ({ ...c, [id]: undefined }));
-  }
-
-  function useSuggestion(text: string) {
-    const main = getMainField(step.id);
-    if (main) update((c) => setField(c, step.id, main.id, text));
-  }
-
-  // ---- Grill -------------------------------------------------------------
-  async function sendGrill(id: CoachStepId, history: ChatMessage[]) {
+  // ---- Ask me questions --------------------------------------------------
+  async function sendChat(stepId: StepId, history: ChatMessage[]) {
     // `history` already ends with the participant's turn.
-    setChat(id, () => [...history, { role: 'assistant', content: '' }]);
-    const result = await run('grill', id, { step: id, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
-      setChat(id, (m) => [...m.slice(0, -1), { role: 'assistant', content: t }]),
+    setChat(stepId, () => [...history, { role: 'assistant', content: '' }]);
+    const result = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
+      setChat(stepId, (m) => [...m.slice(0, -1), { role: 'assistant', content: t }]),
     );
     if (result === null) {
       // Drop the coach's turn, even if part of it arrived, so it isn't saved or sent back.
-      // If only the automatic opener is left, clear it so Grill me starts afresh.
-      setChat(id, (m) => {
+      // If only the automatic opener is left, clear it so "Ask me questions" starts afresh.
+      setChat(stepId, (m) => {
         const rest = m[m.length - 1]?.role === 'assistant' ? m.slice(0, -1) : m;
-        return rest.length === 1 && rest[0]?.content === grillOpener(id) ? [] : rest;
+        return rest.length === 1 && rest[0] && isQuestionsOpener(rest[0].content) ? [] : rest;
       });
     }
   }
 
-  function grill() {
-    const id = step.id as CoachStepId;
+  function askQuestions() {
     if (busy) return;
-    setPanel(id, 'grill');
-    const existing = canvas.chats[id];
-    if (existing.length === 0) void sendGrill(id, [{ role: 'user', content: grillOpener(id) }]);
+    setPanel(id, 'questions');
+    if (canvas.chats[id].length === 0) void sendChat(id, [{ role: 'user', content: questionsOpener(id) }]);
   }
 
-  function answerGrill(text: string) {
-    const id = step.id as CoachStepId;
-    void sendGrill(id, [...canvas.chats[id], { role: 'user', content: text }]);
+  function answerQuestion(text: string) {
+    void sendChat(id, [...canvas.chats[id], { role: 'user', content: text }]);
   }
 
-  function restartGrill() {
-    const id = step.id as CoachStepId;
+  function restartQuestions() {
     setChat(id, () => []);
-    void sendGrill(id, [{ role: 'user', content: grillOpener(id) }]);
+    void sendChat(id, [{ role: 'user', content: questionsOpener(id) }]);
   }
 
-  // ---- Build and tune ----------------------------------------------------
-  async function writePrompt(anyway = false) {
+  // ---- Draft it for me ---------------------------------------------------
+  async function draftStatement() {
     if (busy) return;
-    const unfinished = missingCoachSteps(canvas, completion).length > 0;
-    const write = async () => {
-      const previous = canvas.build.prompt;
-      setPanelModes((p) => ({ ...p, build: undefined }));
-      update((c) => ({ ...c, build: { ...c.build, prompt: '' } }));
-      const result = await run('build', 'build', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, (t) => update((c) => ({ ...c, build: { ...c.build, prompt: t } })));
-      // On failure, put back the prompt they had, edits included.
-      if (result === null || result.text.trim() === '') update((c) => ({ ...c, build: { ...c.build, prompt: previous } }));
+    const previous = canvas.why.statement;
+    const request = canvasForRequest(setField(canvas, 'why', 'statement', ''));
+    const go = async () => {
+      update((c) => setField(c, 'why', 'statement', ''));
+      const result = await run('statement', 'why', { canvas: request, clarifications: clarificationsFrom(canvas.chats) }, (t) => update((c) => setField(c, 'why', 'statement', t)));
+      if (result === null || result.text.trim() === '') update((c) => setField(c, 'why', 'statement', previous));
     };
-    const replaceNote = canvas.build.prompt.trim() ? ' This will replace the prompt you have now, including any edits you have made.' : '';
-    if (anyway && unfinished) {
+    if (previous.trim()) {
       setConfirm({
-        title: 'Write your prompt anyway?',
-        message: (judgeOn ? JUDGE_ANYWAY : LENGTH_ANYWAY).replace(' Go ahead?', `${replaceNote} Go ahead?`),
-        confirmLabel: 'Yes, write it',
-        onConfirm: () => void write(),
-      });
-    } else if (canvas.build.prompt.trim()) {
-      setConfirm({
-        title: 'Replace your build prompt?',
-        message: "A new prompt will replace the one you have now, including any edits you've made.",
+        title: 'Replace your problem statement?',
+        message: "A new draft will replace what you've written.",
         confirmLabel: 'Yes, replace it',
+        onConfirm: () => void go(),
+      });
+    } else {
+      await go();
+    }
+  }
+
+  // ---- Suggest three -----------------------------------------------------
+  async function suggestAssumptions() {
+    if (busy) return;
+    setSuggestions([]);
+    const result = await run('assumptions', 'bet', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, (t) => setSuggestions(parseAssumptions(t)));
+    if (result === null) setSuggestions([]);
+  }
+
+  function pickSuggestion(text: string) {
+    const apply = () => update((c) => setField(c, 'bet', 'assumption', text));
+    if (canvas.bet.assumption.trim()) {
+      setConfirm({ title: 'Use this suggestion?', message: "It will replace what's in the box now.", confirmLabel: 'Yes, use it', onConfirm: apply });
+    } else {
+      apply();
+    }
+  }
+
+  // ---- The brief ---------------------------------------------------------
+  function startBrief() {
+    const latest = canvasRef.current;
+    const write = async () => {
+      const previous = { document: latest.brief.document, fit: latest.brief.fit };
+      setPanelModes((p) => ({ ...p, brief: undefined }));
+      setReview('');
+      update((c) => ({ ...c, brief: { ...c.brief, document: '', fit: '' } }));
+      const request = canvasForRequest({ ...latest, brief: { ...latest.brief, document: '', fit: '' } });
+      const result = await run('brief', 'brief', { canvas: request, clarifications: clarificationsFrom(latest.chats) }, (t) => {
+        const { fit, rest } = parseFit(t);
+        update((c) => ({ ...c, brief: { ...c.brief, fit: fit ?? '', document: rest } }));
+      });
+      // On failure, put back the brief they had, edits included.
+      if (result === null || result.text.trim() === '') update((c) => ({ ...c, brief: { ...c.brief, ...previous } }));
+    };
+    if (latest.brief.document.trim()) {
+      setConfirm({
+        title: 'Rewrite your brief?',
+        message: "A new brief will replace the one you have now, including any edits you've made.",
+        confirmLabel: 'Yes, rewrite it',
         onConfirm: () => void write(),
       });
     } else {
-      await write();
+      void write();
     }
   }
 
-  async function tunePrompt() {
+  /**
+   * "Write my brief": check this screen's boxes first, then write. If anything
+   * earlier is still unsigned-off, list it and let the participant go ahead anyway.
+   */
+  async function writeBrief(anyway = false) {
+    if (busy || checksRunning.current.has('brief')) return;
+    const snapshot = canvasRef.current;
+    const missingBoxes = emptyBoxesMessage(snapshot, 'brief') !== '';
+    setTried((t) => {
+      const next = new Set(t);
+      if (missingBoxes) next.add('brief');
+      else next.delete('brief');
+      return next;
+    });
+    if (missingBoxes) return;
+    setGate(null);
+
+    if (!anyway) {
+      let current = snapshot;
+      if (judgeOn) {
+        const verdict = currentJudgement(snapshot, 'brief') ?? (await runCheck('brief'));
+        if (verdict) current = { ...snapshot, judgements: { ...snapshot.judgements, brief: verdict } };
+      }
+      const missing = missingBeforeBrief(current, completion);
+      if (missing.length > 0) {
+        setGate(missing);
+        return;
+      }
+    }
+    startBrief();
+  }
+
+  async function reviewBrief() {
     if (busy) return;
-    setPanel('build', 'tune');
-    setTune('');
-    const result = await run('tune', 'build', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, setTune);
-    if (result === null) setTune('');
+    setPanel('brief', 'review');
+    setReview('');
+    const result = await run('review', 'brief', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, setReview);
+    if (result === null) setReview('');
   }
 
   // ---- Start over --------------------------------------------------------
@@ -266,37 +401,45 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       confirmLabel: 'Yes, clear it',
       onConfirm: () => {
         abortRef.current?.abort();
+        nudgeAbort.current?.abort();
         setBusy(null);
         generation.current += 1;
         checksRunning.current.clear();
+        nudgeStarted.current = {};
         setChecking(new Set());
         setJudgeErrors({});
+        setTried(new Set());
         clearState();
-        setCanvas(emptyCanvas());
-        setChallenges({});
+        setCanvas(stampMeta(emptyCanvas(), Date.now()));
+        setNudges({});
         setPanelModes({});
-        setTune('');
+        setReview('');
+        setSuggestions([]);
+        setGate(null);
         setError(null);
         goTo(0);
       },
     });
   }
 
-  // ---- Panel view --------------------------------------------------------
-  const id = step.id;
+  // ---- What this screen shows --------------------------------------------
   const chat = canvas.chats[id];
-  const available: PanelMode[] =
-    id === 'build'
-      ? tune || busy?.kind === 'tune' ? ['tune'] : []
-      : [
-          ...(challenges[id] !== undefined || busy?.kind === 'challenge' ? (['challenge'] as const) : []),
-          ...(chat.length > 0 ? (['grill'] as const) : []),
-        ];
+  const available: PanelMode[] = [
+    ...(chat.length > 0 ? (['questions'] as const) : []),
+    ...(id === 'brief' && (review || (busy?.kind === 'review' && busy.step === id)) ? (['review'] as const) : []),
+  ];
   const chosen = panelModes[id];
   const mode: PanelMode | null = chosen && available.includes(chosen) ? chosen : (available[available.length - 1] ?? null);
   const stepBusy = busy?.step === id;
-  const mainLabel = getMainField(id)?.label ?? '';
   const stepError = error && error.step === id ? error.message : '';
+
+  const view = judgeView(canvas, id, checking.has(id));
+  const stepDone = isStepComplete(canvas, id, completion);
+  const emptyMessage = tried.has(id) ? emptyBoxesMessage(canvas, id) : '';
+  const savedNudge = nudges[id];
+  const currentFingerprint = currentJudgement(canvas, id)?.fingerprint;
+  const nudge: NudgeView | undefined =
+    savedNudge && savedNudge.fingerprint === currentFingerprint ? { text: savedNudge.text, pending: !savedNudge.done } : undefined;
 
   return (
     <div className="app">
@@ -310,8 +453,8 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
             <p className="topbar__nick">You're {nickname}</p>
           </div>
           <div className="topbar__status">
-            <p className="topbar__progress" aria-label={`${done} of 7 steps complete`}>
-              {done} of 7
+            <p className="topbar__progress" aria-label={`${done} of ${STEPS.length} steps complete`}>
+              {done} of {STEPS.length}
             </p>
             {done === STEPS.length && <Sticker name="yay" size={34} eager className="sticker--done hide-narrow" />}
           </div>
@@ -333,65 +476,78 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
         <main className="main" ref={mainRef} tabIndex={-1} id="main">
           <div className="main__content">
             <StepHeader step={step} showTimings={settings.showTimings} />
-            {step.id === 'build' ? (
-              <BuildStep
-                canvas={canvas}
-                busy={busy !== null}
-                writing={busy?.kind === 'build'}
-                onBuild={(patch) => update((c) => ({ ...c, build: { ...c.build, ...patch } }))}
-                onWrite={() => void writePrompt()}
-                onWriteAnyway={() => void writePrompt(true)}
-                judge={judgeOn}
-                onTune={() => void tunePrompt()}
-                onDownload={() => downloadMarkdown(canvas)}
-                onGoToStep={goTo}
-              />
-            ) : (
-              <StepView
-                step={step}
-                canvas={canvas}
-                onField={(fieldId, value) => update((c) => setField(c, step.id, fieldId, value))}
-                canChallenge={canChallenge(canvas, step.id)}
-                busy={busy !== null}
-                onChallenge={() => void challenge()}
-                onGrill={grill}
-                judgeOn={judgeOn}
-                canCheck={canCheck(canvas, step.id)}
-                judgeView={judgeView(canvas, step.id, checking.has(step.id))}
-                judgeError={judgeErrors[step.id] ?? ''}
-                onCheck={() => void checkStep(step.id as CoachStepId)}
-              />
-            )}
+            <StepView
+              key={id}
+              step={step}
+              canvas={canvas}
+              onField={(fieldId, value) => update((c) => setField(c, id, fieldId, value))}
+              busy={busy !== null}
+              drafting={busy?.kind === 'statement'}
+              onDraft={() => void draftStatement()}
+              suggesting={busy?.kind === 'assumptions'}
+              suggestions={suggestions}
+              onSuggest={() => void suggestAssumptions()}
+              onPickSuggestion={pickSuggestion}
+            >
+              {id === 'brief' ? (
+                <BriefStep
+                  canvas={canvas}
+                  busy={busy !== null}
+                  writing={busy?.kind === 'brief'}
+                  judgeOn={judgeOn}
+                  checking={view.kind === 'checking'}
+                  onBrief={(patch) => update((c) => ({ ...c, brief: { ...c.brief, ...patch } }))}
+                  onWrite={() => void writeBrief()}
+                  onWriteAnyway={() => void writeBrief(true)}
+                  gate={gate}
+                  onGoToStep={goTo}
+                  onCheck={() => pressCheck('brief')}
+                  onReview={() => void reviewBrief()}
+                  onQuestions={askQuestions}
+                  view={view}
+                  checkError={judgeErrors[id] ?? ''}
+                  emptyMessage={emptyMessage}
+                  nudge={nudge}
+                />
+              ) : (
+                <CheckBar
+                  stepId={id}
+                  passed={stepDone}
+                  judgeOn={judgeOn}
+                  view={view}
+                  error={judgeErrors[id] ?? ''}
+                  emptyMessage={emptyMessage}
+                  nudge={nudge}
+                  busy={busy !== null}
+                  onCheck={() => pressCheck(id)}
+                  onQuestions={askQuestions}
+                />
+              )}
+            </StepView>
           </div>
 
-          <div className="main__coach">
-            <CoachPanel
-              mode={mode}
-              available={available}
-              onMode={(m) => setPanel(id, m)}
-              busy={stepBusy}
-              error={stepError}
-              challengeText={challenges[id] ?? ''}
-              tuneText={tune}
-              chat={chat}
-              mainFieldLabel={mainLabel}
-              onUseSuggestion={useSuggestion}
-              onSendChat={answerGrill}
-              onRestartGrill={restartGrill}
-              emptyText={
-                id === 'build'
-                  ? "Once your build prompt is written, press Tune this prompt and I'll tell you what is missing, what is unclear and what is too big to build in one go."
-                  : "When you've written a first go, press Challenge this and I'll tell you what's working and what could be stronger. Or press Grill me and I'll ask you questions."
-              }
-            />
-          </div>
+          {(mode || stepError) && (
+            <div className="main__coach">
+              <CoachPanel
+                mode={mode}
+                available={available}
+                onMode={(m) => setPanel(id, m)}
+                busy={stepBusy}
+                error={stepError}
+                reviewText={review}
+                chat={chat}
+                onSendChat={answerQuestion}
+                onRestartChat={restartQuestions}
+              />
+            </div>
+          )}
 
           <nav className="pager" aria-label="Previous and next step">
             <button type="button" className="btn" onClick={() => goTo(stepIndex - 1)} disabled={stepIndex === 0}>
               ← Previous
             </button>
             {stepIndex < STEPS.length - 1 && (
-              <button type="button" className="btn btn--primary" onClick={next}>
+              <button type="button" className={!judgeOn || stepDone ? 'btn btn--primary' : 'btn'} onClick={next}>
                 Next →
               </button>
             )}

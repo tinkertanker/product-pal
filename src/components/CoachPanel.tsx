@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { isQuestionsOpener } from '../shared/briefFlow';
 import { parseSuggestion } from '../shared/suggestion';
 import type { ChatMessage } from '../shared/canvas';
 import { CopyButton } from './CopyButton';
 import { Markdown } from './Markdown';
 import { Sticker } from './Sticker';
 
-export type PanelMode = 'challenge' | 'grill' | 'tune';
+export type PanelMode = 'questions' | 'review';
 
 type Props = {
   mode: PanelMode | null;
@@ -14,22 +15,17 @@ type Props = {
   /** A request for this step is running. */
   busy: boolean;
   error: string;
-  challengeText: string;
-  tuneText: string;
+  reviewText: string;
   chat: ChatMessage[];
-  mainFieldLabel: string;
-  onUseSuggestion: (text: string) => void;
   onSendChat: (text: string) => void;
-  onRestartGrill: () => void;
-  emptyText: string;
+  onRestartChat: () => void;
 };
 
-const TAB_LABEL: Record<PanelMode, string> = { challenge: 'Challenge', grill: 'Grill', tune: 'Tune' };
+const TAB_LABEL: Record<PanelMode, string> = { questions: 'Questions', review: 'Review' };
 
 const THINKING_TEXT = {
-  challenge: 'Your coach is reading what you wrote…',
-  tune: 'Your coach is reading your prompt…',
-  grill: 'Your coach is thinking of a question…',
+  review: 'Your coach is reading your brief…',
+  questions: 'Your coach is thinking of a question…',
 } as const;
 
 function Thinking({ kind }: { kind: keyof typeof THINKING_TEXT }) {
@@ -46,56 +42,32 @@ function Thinking({ kind }: { kind: keyof typeof THINKING_TEXT }) {
   );
 }
 
-function SuggestionCard({
-  suggestion,
-  pending,
-  onUse,
-  mainFieldLabel,
-  kind,
-}: {
-  suggestion: string | null;
-  pending: boolean;
-  onUse?: (text: string) => void;
-  mainFieldLabel: string;
-  kind: 'challenge' | 'tune';
-}) {
-  if (!suggestion && !pending) return null;
-  return (
-    <div className="suggestion">
-      <p className="suggestion__title">{kind === 'challenge' ? `Here is a tighter draft of “${mainFieldLabel}”` : 'Something you could add'}</p>
-      {suggestion ? (
-        <>
-          <p className="suggestion__text">{suggestion}</p>
-          <div className="suggestion__actions">
-            {kind === 'challenge' && onUse ? (
-              <button type="button" className="btn btn--primary" onClick={() => onUse(suggestion)}>
-                Use this draft
-              </button>
-            ) : (
-              <CopyButton text={suggestion} label="Copy" className="btn btn--primary" />
-            )}
-            {kind === 'challenge' && <span className="suggestion__note">You can still change it afterwards.</span>}
-          </div>
-        </>
-      ) : (
-        <p className="suggestion__note">Writing a draft for you…</p>
-      )}
-    </div>
-  );
-}
-
-function CoachReply({ text, busy, kind, onUse, mainFieldLabel }: { text: string; busy: boolean; kind: 'challenge' | 'tune'; onUse?: (t: string) => void; mainFieldLabel: string }) {
-  if (!text) return busy ? <Thinking kind={kind} /> : null;
+function ReviewReply({ text, busy }: { text: string; busy: boolean }) {
+  if (!text) return busy ? <Thinking kind="review" /> : null;
   const parsed = parseSuggestion(text);
   return (
     <>
       {parsed.body && <Markdown>{parsed.body}</Markdown>}
-      <SuggestionCard suggestion={parsed.suggestion} pending={parsed.pending && busy} onUse={onUse} mainFieldLabel={mainFieldLabel} kind={kind} />
+      {(parsed.suggestion || (parsed.pending && busy)) && (
+        <div className="suggestion">
+          <p className="suggestion__title">Something you could add</p>
+          {parsed.suggestion ? (
+            <>
+              <p className="suggestion__text">{parsed.suggestion}</p>
+              <div className="suggestion__actions">
+                <CopyButton text={parsed.suggestion} label="Copy" className="btn btn--primary" />
+              </div>
+            </>
+          ) : (
+            <p className="suggestion__note">Writing a draft for you…</p>
+          )}
+        </div>
+      )}
     </>
   );
 }
 
-function GrillChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; busy: boolean; onSend: (t: string) => void; onRestart: () => void }) {
+function QuestionChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; busy: boolean; onSend: (t: string) => void; onRestart: () => void }) {
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const last = chat[chat.length - 1];
@@ -115,14 +87,14 @@ function GrillChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; bus
   }
 
   // The auto-sent opener is not worth showing.
-  const shown = chat.filter((m, i) => !(i === 0 && m.role === 'user' && m.content.startsWith('Grill me on my')));
+  const shown = chat.filter((m, i) => !(i === 0 && m.role === 'user' && isQuestionsOpener(m.content)));
   const waiting = busy && (!last || last.role === 'user' || last.content === '');
 
   return (
     <div className="chat">
       <div className="grill-intro">
         <Sticker name="intenseglare" size={44} className="sticker--avatar" />
-        <p>I'll ask the questions. Take your time with your answers, and reply whenever you're ready.</p>
+        <p>I'll ask one question at a time.</p>
       </div>
       {shown.map((m, i) =>
         m.role === 'assistant' ? (
@@ -137,7 +109,7 @@ function GrillChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; bus
           </div>
         ),
       )}
-      {waiting && <Thinking kind="grill" />}
+      {waiting && <Thinking kind="questions" />}
       <div ref={endRef} />
       <form className="chat__form" onSubmit={submit}>
         <label htmlFor="chat-input" className="sr-only">
@@ -168,11 +140,18 @@ function GrillChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; bus
 }
 
 export function CoachPanel(props: Props) {
-  const { mode, available, onMode, busy, error, challengeText, tuneText, chat, mainFieldLabel, onUseSuggestion, onSendChat, onRestartGrill, emptyText } = props;
-  const empty = !mode && !error;
+  const { mode, available, onMode, busy, error, reviewText, chat, onSendChat, onRestartChat } = props;
+  const ref = useRef<HTMLElement>(null);
+
+  // On a narrow screen the panel sits below the boxes; bring it into view when it opens.
+  useEffect(() => {
+    if (mode) ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [mode]);
+
+  if (!mode && !error) return null;
 
   return (
-    <aside className={`coach${empty ? ' coach--empty' : ''}`} aria-label="Coach" aria-live="polite" aria-busy={busy}>
+    <aside className="coach" aria-label="Coach" aria-live="polite" aria-busy={busy} ref={ref}>
       <div className="coach__head">
         <h3>Your coach</h3>
         {available.length > 1 && (
@@ -186,21 +165,14 @@ export function CoachPanel(props: Props) {
         )}
       </div>
 
-      {empty && (
-        <div className="coach__empty">
-          <Sticker name="point-left" size={72} className="sticker--point" />
-          <p>{emptyText}</p>
-        </div>
-      )}
       {error && (
         <div className="error error--with-sticker" role="alert">
           <Sticker name="crashed" size={44} className="sticker--error" />
           <p>{error}</p>
         </div>
       )}
-      {mode === 'challenge' && <CoachReply text={challengeText} busy={busy} kind="challenge" onUse={onUseSuggestion} mainFieldLabel={mainFieldLabel} />}
-      {mode === 'tune' && <CoachReply text={tuneText} busy={busy} kind="tune" mainFieldLabel={mainFieldLabel} />}
-      {mode === 'grill' && <GrillChat chat={chat} busy={busy} onSend={onSendChat} onRestart={onRestartGrill} />}
+      {mode === 'review' && <ReviewReply text={reviewText} busy={busy} />}
+      {mode === 'questions' && <QuestionChat chat={chat} busy={busy} onSend={onSendChat} onRestart={onRestartChat} />}
     </aside>
   );
 }

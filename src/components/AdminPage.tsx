@@ -10,10 +10,10 @@ import {
   fetchPublicSettings,
 } from '../api';
 import { allParticipantsMarkdown } from '../shared/adminExport';
-import { COACH_STEP_IDS, STEP_IDS, canvasToMarkdown, currentJudgement, type CoachStepId, type StepId } from '../shared/canvas';
+import { COACH_STEP_IDS, STEP_IDS, THINKING_STEP_IDS, canvasToMarkdown, currentJudgement, type CoachStepId, type StepId } from '../shared/canvas';
 import { clarificationsFrom, type ParticipantDetail, type ParticipantSummary, type Settings } from '../shared/contracts';
 import { STEPS, getStep } from '../shared/steps';
-import { timeAgo } from '../shared/timeAgo';
+import { startedTyping, timeAgo } from '../shared/timeAgo';
 import { clearAdminPassword, loadAdminPassword, saveAdminPassword } from '../storage';
 import { ConfirmDialog, type ConfirmState } from './ConfirmDialog';
 import { downloadText } from './download';
@@ -192,8 +192,8 @@ function Dashboard({ password, onSignOut, onUnauthorised }: { password: string; 
     const list = participants ?? [];
     return {
       total: list.length,
-      finished: list.filter((p) => COACH_STEP_IDS.every((id) => p.done.includes(id))).length,
-      prompts: list.filter((p) => p.buildPromptLength > 0).length,
+      finished: list.filter((p) => THINKING_STEP_IDS.every((id) => p.done.includes(id))).length,
+      briefs: list.filter((p) => p.buildPromptLength > 0).length,
     };
   }, [participants]);
 
@@ -285,8 +285,8 @@ function Dashboard({ password, onSignOut, onUnauthorised }: { password: string; 
 
         <section className="stats" aria-label="Summary">
           <Stat value={participants ? stats.total : '…'} label="Participants" />
-          <Stat value={participants ? stats.finished : '…'} label="Finished all 6 thinking steps" />
-          <Stat value={participants ? stats.prompts : '…'} label="Have a build prompt" />
+          <Stat value={participants ? stats.finished : '…'} label="Finished the four thinking steps" />
+          <Stat value={participants ? stats.briefs : '…'} label="Have a brief" />
         </section>
 
         <section className="panel" aria-labelledby="settings-title">
@@ -351,7 +351,7 @@ function Dashboard({ password, onSignOut, onUnauthorised }: { password: string; 
               <div className="prow prow--head" aria-hidden="true">
                 <span className="prow__nick">Name</span>
                 <span className="prow__dots">Steps</span>
-                <span className="prow__prompt">Prompt</span>
+                <span className="prow__prompt">Brief</span>
                 <span className="prow__active">Last active</span>
               </div>
               <ul>
@@ -362,7 +362,7 @@ function Dashboard({ password, onSignOut, onUnauthorised }: { password: string; 
                       <span className="prow__dots">
                         <StepDots done={p.done} />
                       </span>
-                      <span className="prow__prompt">{p.buildPromptLength > 0 ? <span className="pill">Prompt ready</span> : <span className="prow__none">No prompt yet</span>}</span>
+                      <span className="prow__prompt">{p.buildPromptLength > 0 ? <span className="pill">Brief ready</span> : <span className="prow__none">No brief yet</span>}</span>
                       <span className="prow__active">{timeAgo(now, p.updatedAt)}</span>
                     </button>
                   </li>
@@ -463,7 +463,11 @@ function ParticipantPanel({
       <div className="drawer__head">
         <div>
           <h2 id="drawer-title">{detail?.participant.nickname ?? 'Loading…'}</h2>
-          {detail && <p className="field__help">Last active {timeAgo(now, detail.participant.updatedAt)}</p>}
+          {detail && (
+            <p className="field__help">
+              Last active {timeAgo(now, detail.participant.updatedAt)} · {startedTyping(detail.canvas.meta)}
+            </p>
+          )}
         </div>
         <button type="button" className="btn btn--small" onClick={onClose}>
           Close
@@ -500,9 +504,9 @@ function ParticipantBody({ detail }: { detail: ParticipantDetail }) {
       </section>
 
       <section aria-labelledby="d-grill">
-        <h3 id="d-grill">What they said when grilled</h3>
+        <h3 id="d-grill">What they said when asked questions</h3>
         {answered.length === 0 ? (
-          <p className="field__help">No grill answers yet.</p>
+          <p className="field__help">No answers yet.</p>
         ) : (
           answered.map((id) => (
             <div key={id} className="drawer__group">
@@ -520,7 +524,7 @@ function ParticipantBody({ detail }: { detail: ParticipantDetail }) {
       </section>
 
       <section aria-labelledby="d-canvas">
-        <h3 id="d-canvas">Their canvas</h3>
+        <h3 id="d-canvas">Their brief and notes</h3>
         <Markdown>{canvasToMarkdown(canvas)}</Markdown>
       </section>
     </div>
@@ -544,7 +548,10 @@ function JudgementRow({ id, canvas }: { id: CoachStepId; canvas: ParticipantDeta
             <span className="checklist__mark" aria-hidden="true">
               {c.pass ? '✓' : '○'}
             </span>
-            {c.label}
+            <span className="judge__miss">
+              {c.label}
+              {!c.pass && c.fix && <span className="judge__fix">{c.fix}</span>}
+            </span>
             <span className="judge__pct">{Math.round(c.probability * 100)}%</span>
           </li>
         ))}

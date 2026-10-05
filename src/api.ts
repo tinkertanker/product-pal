@@ -1,10 +1,10 @@
 // Talking to our own server. Nothing here knows about prompts.
 
 import { readCoachStream } from './shared/coachStream';
-import type { CoachMode } from './shared/validation';
-import { normaliseCanvas, type Canvas, type ChatMessage, type CoachStepId } from './shared/canvas';
+import { normaliseCanvas, normaliseDone, type Canvas, type ChatMessage, type CoachStepId } from './shared/canvas';
 import type {
   Clarifications,
+  CoachMode,
   JudgeRequest,
   Judgement,
   ParticipantDetail,
@@ -21,8 +21,11 @@ export type CoachBody = {
   mode: CoachMode;
   step?: CoachStepId;
   canvas: Canvas;
+  /** The question chat so far (`questions` mode). */
   messages?: ChatMessage[];
-  /** The participant's own grill answers, for build and tune. */
+  /** Ids of the checks that were missed (`nudge` mode, 1 to 6). */
+  failed?: string[];
+  /** The participant's own answers in the question chats (`statement`, `assumptions`, `brief` and `review`). */
   clarifications?: Clarifications;
 };
 
@@ -215,9 +218,9 @@ async function adminCall<T>(password: string, path: string, init: { method?: str
 }
 
 export const adminParticipants = (password: string) =>
-  adminCall<{ participants: ParticipantSummary[] }>(password, '/api/admin/participants').then((r) => r.participants);
+  adminCall<{ participants: ParticipantSummary[] }>(password, '/api/admin/participants').then((r) => r.participants.map((p) => ({ ...p, done: normaliseDone(p.done) })));
 export const adminParticipant = (password: string, clientId: string) =>
-  adminCall<ParticipantDetail>(password, `/api/admin/participants/${encodeURIComponent(clientId)}`).then((d) => ({ ...d, canvas: normaliseCanvas(d.canvas) }));
+  adminCall<ParticipantDetail>(password, `/api/admin/participants/${encodeURIComponent(clientId)}`).then((d) => ({ participant: { ...d.participant, done: normaliseDone(d.participant.done) }, canvas: normaliseCanvas(d.canvas) }));
 export const adminSettings = (password: string) => adminCall<Settings>(password, '/api/admin/settings');
 export const adminSaveSettings = (password: string, patch: Partial<Settings>) =>
   adminCall<Settings>(password, '/api/admin/settings', { method: 'PUT', body: patch });

@@ -12,11 +12,11 @@ type Props = {
   checking: ReadonlySet<StepId>;
 };
 
-const STATUS_TEXT: Record<StepStatus, string> = { done: 'Done', checking: 'Checking…', almost: 'Almost there', todo: '' };
+const STATUS_TEXT: Record<StepStatus, string> = { done: 'Done', checking: 'Checking…', almost: 'Almost there', filled: 'Filled in', todo: '' };
 
 /** The small line under a step's title in the rail. Empty when there is nothing to say. */
 function subline(step: StepDef, status: StepStatus, showTimings: boolean): string {
-  return [showTimings ? `${step.minutesLabel} min` : '', STATUS_TEXT[status]].filter(Boolean).join(' · ');
+  return [showTimings ? `${step.minutes} min` : '', STATUS_TEXT[status]].filter(Boolean).join(' · ');
 }
 
 export function Stepper({ canvas, current, onSelect, mode, showTimings, checking }: Props) {
@@ -30,7 +30,7 @@ export function Stepper({ canvas, current, onSelect, mode, showTimings, checking
             <li key={step.id}>
               <button
                 type="button"
-                className={`rail__item${i === current ? ' is-current' : ''}${status === 'done' ? ' is-done' : ''}${status === 'almost' ? ' is-almost' : ''}${status === 'checking' ? ' is-checking' : ''}`}
+                className={`rail__item${i === current ? ' is-current' : ''}${status === 'done' ? ' is-done' : ''}${status === 'almost' ? ' is-almost' : ''}${status === 'filled' ? ' is-filled' : ''}${status === 'checking' ? ' is-checking' : ''}`}
                 aria-current={i === current ? 'step' : undefined}
                 onClick={() => onSelect(i)}
               >
@@ -67,8 +67,8 @@ export function MobileProgress({ canvas, current, onSelect, mode, showTimings, c
             <option key={step.id} value={i}>
               {status === 'done' ? '✓ ' : ''}
               {step.number}. {step.title}
-              {showTimings ? ` (${step.minutesLabel} min)` : ''}
-              {status === 'almost' ? ' (almost there)' : status === 'checking' ? ' (checking)' : ''}
+              {showTimings ? ` (${step.minutes} min)` : ''}
+              {status === 'almost' ? ' (almost there)' : status === 'filled' ? ' (filled in)' : status === 'checking' ? ' (checking)' : ''}
             </option>
           );
         })}
