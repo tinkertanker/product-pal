@@ -69,7 +69,7 @@ export const STEPS: StepDef[] = [
       {
         id: 'who',
         label: 'Who is this for?',
-        helper: "One person or role, not 'users'.",
+        helper: "One person or role. 'Users' is too broad.",
         placeholder: 'e.g. New nurses on night shift',
         multiline: false,
         required: true,
@@ -77,7 +77,7 @@ export const STEPS: StepDef[] = [
       {
         id: 'pain',
         label: "What's hard for them today?",
-        helper: "A moment you've seen, not a feature you want.",
+        helper: "A moment you've seen. Save any feature for the parked idea box.",
         placeholder: 'e.g. At handover they hunt through three systems to find what changed',
         multiline: true,
         required: true,
@@ -192,7 +192,7 @@ export const STEPS: StepDef[] = [
       {
         id: 'metric',
         label: 'What number changes for them if this works?',
-        helper: "Something in their day, such as minutes saved. Usage numbers such as logins don't count.",
+        helper: "Something in their day, such as minutes saved. Logins and other usage numbers don't count.",
         placeholder: 'e.g. Minutes to complete a handover',
         multiline: false,
         required: true,

@@ -43,7 +43,7 @@ Plain vars live in `wrangler.jsonc`. Secrets are not in the file: locally they c
 
 ## Step checker (Jev)
 
-Each screen is marked done by an AI judge rather than by length. When a participant presses **Check my step**, or moves on with **Next**, the Worker sends that screen's text to TypeSafe's `jev-latest` model (`POST https://api.typesafe.ai/v1/systemone`, 10 second timeout) as a handful of yes/no questions. The questions, the pass rule and the wording participants see are in `src/shared/judge.ts`. The participant's own answers from the question chat are sent with the step and count towards it.
+Screens 1 to 4 are marked done by an AI judge rather than by length; screen 5 is done once the brief exists. When a participant presses **Check my step**, or moves on with **Next**, the Worker sends that screen's text to TypeSafe's `jev-latest` model (`POST https://api.typesafe.ai/v1/systemone`, 10 second timeout) as a handful of yes/no questions. The questions, the pass rule and the wording participants see are in `src/shared/judge.ts`. The participant's own answers from the question chat are sent with the step and count towards it.
 
 Every screen also gets a `genuine` check ("Reads as a real attempt"), which is required and needs a probability of 0.6. Required checks must always pass.
 
@@ -55,7 +55,7 @@ Every screen also gets a `genuine` check ("Reads as a real attempt"), which is r
 | Riskiest bet | the assumption would sink the idea, the test fits in 30 minutes without code, the pass mark is a number decided up front |
 | Your brief | walks through what the user does and sees, says what the user sees when it goes wrong |
 
-Pass rule: a check passes at a probability of 0.5 or more (unless noted above). A screen passes when every required check passes and, on screens with four or more checks besides `genuine`, at most one other check misses. When a screen fails, Pal writes a short nudge: one line and one question for each missed check.
+Pass rule: a check passes at a probability of 0.5 or more (unless noted above). A screen passes when every required check passes and, on screens with four or more checks besides `genuine`, at most one other check misses. When a screen fails, or passes with a miss, Pal writes a short nudge: one line and one question for each missed check.
 
 If `TYPESAFE_API_KEY` is missing, or the facilitator switches **Use the AI step checker** off on `/admin`, the app falls back to a simple length rule. Docs are at https://docs.typesafe.ai. Set the key with `npx wrangler secret put TYPESAFE_API_KEY`.
 
@@ -86,7 +86,7 @@ They pick the tool they will build with, then:
 
 Set `ADMIN_PASSWORD`, open `/admin` and enter it. You can see every participant (by nickname), which screens each has finished, whether they have a brief, and read their canvas, checker results and question-chat answers. You can also switch the suggested timings and the AI step checker on or off for everyone, download everyone's canvases as one Markdown file, and clear all participants between events.
 
-Participants' browsers send their progress to `POST /api/sync` (debounced to about every four seconds). If a sync fails, the browser retries with backoff, starting at 15 seconds and doubling up to two minutes. Everything `/api/admin/*` needs an `Authorization: Bearer <ADMIN_PASSWORD>` header; wrong passwords count against the same per-IP limit as wrong workshop codes.
+Participants' browsers send their progress to `POST /api/sync` (debounced to about four seconds after the last change, and at most one successful sync every 15 seconds per browser; the hide-tab beacon is exempt). Only the participant's own chat turns are sent. A sync that does not answer within 8 seconds counts as failed, and only one is in flight at a time. If a sync fails, the browser retries with jittered backoff (0.5 to 1.5 times the delay), starting at 15 seconds and doubling up to two minutes, and honours a `Retry-After` header; while backing off, typing does not trigger extra sends. The policy is in `src/shared/syncPolicy.ts`. Everything `/api/admin/*` needs an `Authorization: Bearer <ADMIN_PASSWORD>` header; wrong passwords count against the same per-IP limit as wrong workshop codes.
 
 ## Changing the workshop code
 
@@ -107,8 +107,8 @@ Only `delta.content` is streamed to the browser. Reasoning tokens (DeepSeek's `r
 - `worker/` is the imperative shell: `worker/index.ts` is the Cloudflare Worker (routes, rate-limit bindings), `worker/llm.ts` makes the streaming call to the LLM, `worker/jev.ts` calls the step checker and `worker/store.ts` holds the SQL for D1. Anything that is not `/api/*` is served as static assets, with single-page-app fallback.
 - `src/` (the rest) is the React client.
 - The Worker owns every system prompt. The client sends a mode, a step, the canvas and chat history; it can never send its own system prompt.
-- Every `/api/coach` call re-checks the workshop code. Limits, enforced by [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) bindings declared in `wrangler.jsonc`: 10 requests per minute per browser, 200 per minute per IP, and 60 wrong-code attempts per minute per IP. `/api/judge` adds 30 requests per minute per browser, and `/api/sync` allows 30 per minute per browser. Counts are approximate and local to each Cloudflare location. If a binding is missing, that limit is skipped.
-- Routes: `GET /api/health`, `POST /api/join`, `POST /api/coach`, `POST /api/judge`, `POST /api/sync` (204; bodies over 200 KB get 413), `GET /api/settings` (no code needed; if the database does not answer within 1.5 seconds it returns 503, so browsers keep the settings they last had instead of falling back to defaults), and the admin routes `GET|DELETE /api/admin/participants`, `GET /api/admin/participants/:clientId` and `GET|PUT /api/admin/settings`.
+- Every `/api/coach` call re-checks the workshop code. Limits, enforced by [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) bindings declared in `wrangler.jsonc`: 10 requests per minute per browser, 200 per minute per IP, and 60 wrong-code attempts per minute per IP. `/api/judge` adds 30 requests per minute per browser, and `/api/sync` allows 30 per minute per browser and 300 per minute per IP. Counts are approximate and local to each Cloudflare location. If a binding is missing, that limit is skipped.
+- Routes: `GET /api/health`, `POST /api/join`, `POST /api/coach`, `POST /api/judge` (400 if the screen's boxes are empty), `POST /api/sync` (204; bodies over 64 KB get 413; a database write that fails or takes over 3 seconds gets 503 with `Retry-After: 30`), `GET /api/settings` (no code needed; cached in each Worker isolate for 30 seconds, so D1 is read at most once per isolate per 30 seconds, and the cache is refreshed when the facilitator saves; if the database then fails or does not answer within 1.5 seconds it serves the last cached value, or 503 if there is none, so browsers keep the settings they last had instead of falling back to defaults), and the admin routes `GET|DELETE /api/admin/participants`, `GET /api/admin/participants/:clientId` and `GET|PUT /api/admin/settings`.
 - The `statement`, `assumptions`, `brief` and `review` modes also receive what the participant clarified in the question chats (`clarifications`), which overrides the canvas where they differ.
 
 ## Deploying

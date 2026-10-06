@@ -24,6 +24,10 @@ describe('parseFit', () => {
     expect(parseFit('```fit\nYes, it fits.\n``')).toEqual({ fit: 'Yes, it fits.', rest: '' });
   });
 
+  it('copes with a fit block written on one line', () => {
+    expect(parseFit('```fit Yes, it fits.```\n\n# Brief\n\nText')).toEqual({ fit: 'Yes, it fits.', rest: '# Brief\n\nText' });
+  });
+
   it('treats another kind of fenced block as part of the document', () => {
     const raw = '```markdown\n# Title\n```';
     expect(parseFit(raw)).toEqual({ fit: null, rest: raw });

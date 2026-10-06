@@ -311,7 +311,8 @@ export function readSyncCanvas(input: unknown): Read<Canvas> {
         if (m.content.length > LIMITS.message) {
           return { ok: false, error: `canvas.chats.${id}[${i}] is too long (limit ${LIMITS.message} characters).` };
         }
-        messages.push({ role: m.role, content: m.content });
+        // Only the participant's own turns are ever read back, so the coach's are not stored.
+        if (m.role === 'user') messages.push({ role: m.role, content: m.content });
       }
       canvas.chats[id as StepId] = messages;
     }

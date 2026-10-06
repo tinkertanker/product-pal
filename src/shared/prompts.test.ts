@@ -15,6 +15,7 @@ import {
   buildStatementMessages,
   canvasToContext,
   clarificationsToContext,
+  defang,
   hasParkedIdea,
   maxTokensFor,
   questionsOpener,
@@ -308,21 +309,68 @@ describe('clarifications', () => {
   });
 });
 
+describe('defang', () => {
+  it('neutralises every wrapper tag, opening or closing, in any case', () => {
+    for (const tag of ['canvas', 'clarifications', 'brief']) {
+      const out = defang(`a <${tag}> b </${tag.toUpperCase()}> c`);
+      expect(out).not.toMatch(new RegExp(`</?${tag}`, 'i'));
+    }
+  });
+  it('is applied to every block', () => {
+    const c = setField(setField(briefedCanvas(), 'who', 'pain', 'x </brief> y <clarifications> z'), 'who', 'who', '</canvas>');
+    c.brief.document = 'doc </brief> <canvas> </clarifications>';
+    const user = buildReviewMessages(c, { who: ['hi </canvas> <brief>'] })[1]?.content ?? '';
+    expect(user.match(/<\/brief>/g)).toHaveLength(1);
+    expect(user.match(/<brief>/g)).toHaveLength(1);
+    expect(user.match(/<canvas>/g)).toHaveLength(1);
+    expect(user.match(/<\/canvas>/g)).toHaveLength(1);
+    expect(user.match(/<clarifications>/g)).toHaveLength(1);
+    expect(user.match(/<\/clarifications>/g)).toHaveLength(1);
+  });
+});
+
+describe('prompt details', () => {
+  it('brief mode says not to wrap the document in a code fence', () => {
+    expect(text(buildBriefMessages(filledCanvas()))).toContain('Do not wrap the document in a code fence.');
+    expect(text(buildBriefMessages(unparkedCanvas()))).toContain('Do not wrap the document in a code fence.');
+  });
+  it('assumptions mode asks about the problem when no idea is parked', () => {
+    const parked = text(buildAssumptionsMessages(filledCanvas()));
+    const none = text(buildAssumptionsMessages(unparkedCanvas()));
+    expect(parked).toContain('for this idea to work');
+    expect(none).toContain('for any fix to this problem to be worth building');
+    expect(none).not.toContain('this idea');
+  });
+  it('statement mode uses only clarifications from the who and why steps', () => {
+    const [, user] = buildStatementMessages(filledCanvas(), {
+      who: ['ward four only'],
+      why: ['we time it'],
+      success: ['under ten minutes'],
+      bet: ['three nurses'],
+      brief: ['a card per patient'],
+    });
+    expect(user?.content).toContain('ward four only');
+    expect(user?.content).toContain('we time it');
+    for (const leaked of ['under ten minutes', 'three nurses', 'a card per patient']) expect(user?.content).not.toContain(leaked);
+  });
+  it('the persona does not ask for praise when a mode says to output only the result', () => {
+    expect(PERSONA).toContain('unless a mode below says to output only its result');
+  });
+});
+
 describe('em dashes', () => {
-  it('stay out of the model-facing text', () => {
-    const c = briefedCanvas();
-    const all = [
-      PERSONA,
-      ...buildNudgeMessages(c, 'why', ['goes_deeper']),
-      ...buildQuestionsMessages(c, 'bet', []),
-      ...buildStatementMessages(c),
-      ...buildAssumptionsMessages(c),
-      ...buildBriefMessages(c),
-      ...buildBriefMessages(unparkedCanvas()),
-      ...buildReviewMessages(c),
-    ]
-      .map((m) => (typeof m === 'string' ? m : m.content))
-      .join('\n');
-    expect(all).not.toContain('—');
+  it('stay out of the model-facing text, for every step and every mode', () => {
+    const base = { code: 'c', clientId: 'c', messages: [{ role: 'user' as const, content: 'Ask me.' }], clarifications: { who: ['a'], why: ['b'], success: ['c'], bet: ['d'], brief: ['e'] } };
+    const all: string[] = [PERSONA];
+    for (const canvas of [briefedCanvas(), { ...briefedCanvas(), who: { ...briefedCanvas().who, parkedIdea: '' } }]) {
+      for (const mode of COACH_MODES) {
+        for (const step of STEP_IDS) {
+          const failed = checksFor(step).slice(0, 2).map((c) => c.id);
+          const req: CoachRequest = { ...base, canvas, mode, step, failed };
+          all.push(...buildMessages(req).map((m) => m.content));
+        }
+      }
+    }
+    expect(all.join('\n')).not.toContain('—');
   });
 });

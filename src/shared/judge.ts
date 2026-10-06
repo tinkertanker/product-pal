@@ -35,7 +35,7 @@ export const GENUINE_PASS = 0.6;
  * restate themselves or jump sideways scored 0.06 to 0.19. 0.3 sits in the gap.
  */
 export const GOES_DEEPER_PASS = 0.3;
-/** Steps with more than this many checks (besides `genuine`) may miss one of the non-required ones. */
+/** Steps with at least this many checks (besides `genuine`) may miss one of the non-required ones. */
 export const ALLOWED_MISS_MIN_CHECKS = 4;
 
 export const GENUINE_CHECK: JudgeCheckDef = {

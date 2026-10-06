@@ -403,7 +403,7 @@ const OLD_STEP_IDS: Record<string, StepId> = {
   problem: 'why',
   metric: 'success',
   assumption: 'bet',
-  experience: 'brief',
+  // The old experience step had no document, so finishing it does not mean the brief is done.
   build: 'brief',
 };
 

@@ -28,7 +28,10 @@ export function parseFit(raw: string): ParsedFit {
     if (text.length < opener.length && opener.startsWith(text)) return { fit: null, rest: '' };
     return { fit: null, rest: text };
   }
-  const body = text.slice(opener.length).replace(/^[^\n]*\n?/, '');
+  // Normally the text starts on the line after the opener. If the model put it
+  // on the same line, keep it rather than throwing it away with the opener.
+  const afterOpener = text.slice(opener.length);
+  const body = afterOpener.replace(/^[ \t]*\n?/, '');
   const close = body.indexOf(FENCE);
   if (close === -1) return { fit: body.replace(/`+$/, '').trim(), rest: '' };
   return { fit: body.slice(0, close).trim(), rest: body.slice(close + FENCE.length).replace(/^\s+/, '') };

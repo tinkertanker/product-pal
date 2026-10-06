@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCanvas } from './canvas';
+import { STEP_IDS, emptyCanvas, setField, stepFingerprint } from './canvas';
 import { COACH_MODES as CONTRACT_MODES } from './contracts';
 import { filledCanvas } from './fixtures';
 import {
@@ -10,6 +10,7 @@ import {
   validateCoachRequest,
   validateJudgeRequest,
   validateSyncRequest,
+  LIMITS,
 } from './validation';
 
 const base = () => ({ code: 'M82T7', clientId: 'client-1', mode: 'nudge', step: 'who', failed: ['specific_user'], canvas: emptyCanvas() });
@@ -239,6 +240,14 @@ describe('validateJudgeRequest', () => {
 });
 
 describe('validateSyncRequest', () => {
+  it("keeps only the participant's own chat turns", () => {
+    const read = readSyncCanvas({
+      chats: { who: [{ role: 'user', content: 'opener' }, { role: 'assistant', content: 'a question' }, { role: 'user', content: 'my answer' }] },
+    });
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(read.value.chats.who).toEqual([{ role: 'user', content: 'opener' }, { role: 'user', content: 'my answer' }]);
+  });
+
   const syncBody = (over: Record<string, unknown> = {}) => ({ code: 'M82T7', clientId: 'c1', canvas: emptyCanvas(), done: ['who'], ...over });
   it('accepts a good request and keeps the chats, judgements and meta', () => {
     const canvas = emptyCanvas();
@@ -317,5 +326,32 @@ describe('validateSyncRequest', () => {
     const canvas = emptyCanvas();
     canvas.who.pain = 'x'.repeat(4001);
     expect(validateSyncRequest(syncBody({ canvas })).ok).toBe(false);
+  });
+});
+
+describe('fingerprint round trip', () => {
+  it('is the same for the client canvas and for what the server reads back, on every step', () => {
+    const canvas = filledCanvas();
+    canvas.brief.document = 'A brief.';
+    const wire = JSON.parse(JSON.stringify(canvasForRequest(canvas)));
+    for (const step of STEP_IDS) {
+      const parsed = validateJudgeRequest({ code: 'c', clientId: 'c', step, canvas: wire });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(stepFingerprint(parsed.value.canvas, step)).toBe(stepFingerprint(canvas, step));
+    }
+  });
+  // The inputs cap every box at the limit (maxLength), so a client canvas never really holds more.
+  // If it did, the server would fingerprint the clamped text, which differs from the raw one.
+  it('matches the clamped canvas for a field longer than the per-field limit', () => {
+    let canvas = filledCanvas();
+    canvas = setField(canvas, 'who', 'pain', 'p'.repeat(LIMITS.field + 500));
+    canvas = setField(canvas, 'why', 'whys.0', 'w'.repeat(LIMITS.field + 1));
+    canvas = setField(canvas, 'bet', 'test', 't'.repeat(LIMITS.field * 2));
+    const wire = JSON.parse(JSON.stringify(canvasForRequest(canvas)));
+    for (const step of STEP_IDS) {
+      const parsed = validateJudgeRequest({ code: 'c', clientId: 'c', step, canvas: wire });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(stepFingerprint(parsed.value.canvas, step)).toBe(stepFingerprint(canvasForRequest(canvas), step));
+    }
   });
 });
