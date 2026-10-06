@@ -451,7 +451,9 @@ function ParticipantPanel({
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), REFRESH_MS);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, REFRESH_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);

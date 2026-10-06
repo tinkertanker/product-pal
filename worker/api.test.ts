@@ -1,8 +1,8 @@
 // Routes added for the step checker, sync, settings and admin. `env.DB` is a
 // hand-rolled in-memory fake that understands exactly the statements in store.ts.
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handle, type Env } from './index';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { handle, resetSettingsCache, type Env } from './index';
 import { emptyCanvas } from '../src/shared/canvas';
 import { nicknameFor } from '../src/shared/contracts';
 import { checksFor } from '../src/shared/judge';
@@ -82,6 +82,7 @@ const req = (method: string, path: string, body?: unknown, headers: Record<strin
 const admin = (password = 'pw') => ({ Authorization: `Bearer ${password}` });
 const json = async (res: Response) => (await res.json()) as Record<string, any>;
 
+beforeEach(() => resetSettingsCache());
 afterEach(() => vi.unstubAllGlobals());
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,23 @@ describe('/api/judge', () => {
 });
 
 // ---------------------------------------------------------------------------
+
+describe('the emptiness guard', () => {
+  it('refuses judge, statement, assumptions and brief on an empty canvas, without paying for a call', async () => {
+    const fetchMock = vi.fn(async () => new Response('data: [DONE]\n\n'));
+    vi.stubGlobal('fetch', fetchMock);
+    const e = env({ TYPESAFE_API_KEY: 'k' });
+    const judge = await handle(req('POST', '/api/judge', { code: 'M82T7', clientId: 'c', step: 'who', canvas: emptyCanvas() }), e);
+    expect(judge.status).toBe(400);
+    expect((await json(judge)).error).toBeTruthy();
+    for (const mode of ['statement', 'assumptions', 'brief']) {
+      const res = await handle(req('POST', '/api/coach', { code: 'M82T7', clientId: 'c', mode, canvas: emptyCanvas() }), e);
+      expect(res.status, mode).toBe(400);
+      expect((await json(res)).error).toBeTruthy();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
 
 describe('coach clarifications', () => {
   it('rejects malformed clarifications with 400', async () => {
@@ -271,14 +289,14 @@ describe('/api/sync', () => {
     expect((await handle(req('POST', '/api/sync', '{oops'), e)).status).toBe(400);
   });
 
-  it('rejects a body over 200 KB with 413', async () => {
+  it('rejects a body over 64 KB with 413', async () => {
     const e = env({ DB: fakeDb().db });
-    const big = JSON.stringify(syncBody({ padding: 'x'.repeat(200_001) }));
+    const big = JSON.stringify(syncBody({ padding: 'x'.repeat(64_001) }));
     const res = await handle(req('POST', '/api/sync', big), e);
     expect(res.status).toBe(413);
     expect((await json(res)).error).toBeTruthy();
     const justUnder = JSON.stringify(syncBody());
-    expect(justUnder.length).toBeLessThan(200_000);
+    expect(justUnder.length).toBeLessThan(64_000);
     expect((await handle(req('POST', '/api/sync', justUnder), e)).status).toBe(204);
   });
 
@@ -286,6 +304,44 @@ describe('/api/sync', () => {
     expect((await handle(req('POST', '/api/sync', syncBody()), env())).status).toBe(503);
     const no = { limit: async () => ({ success: false }) };
     expect((await handle(req('POST', '/api/sync', syncBody()), env({ DB: fakeDb().db, SYNC_CLIENT_LIMITER: no }))).status).toBe(429);
+  });
+
+  it('is limited per IP as well as per client', async () => {
+    const seen: string[] = [];
+    const yes = (tag: string) => ({ limit: async ({ key }: { key: string }) => (seen.push(`${tag}:${key}`), { success: true }) });
+    const no = { limit: async () => ({ success: false }) };
+    const headers = { 'CF-Connecting-IP': '7.7.7.7' };
+    const ok = await handle(req('POST', '/api/sync', syncBody(), headers), env({ DB: fakeDb().db, SYNC_CLIENT_LIMITER: yes('c'), SYNC_IP_LIMITER: yes('ip') }));
+    expect(ok.status).toBe(204);
+    expect(seen).toEqual(['c:client:abc-123', 'ip:ip:7.7.7.7']);
+    const denied = await handle(req('POST', '/api/sync', syncBody()), env({ DB: fakeDb().db, SYNC_IP_LIMITER: no }));
+    expect(denied.status).toBe(429);
+    expect(denied.headers.get('retry-after')).toBe('60');
+    expect((await handle(req('POST', '/api/sync', syncBody()), env({ DB: fakeDb().db }))).status).toBe(204);
+  });
+
+  it('answers 503 with Retry-After when the write fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const broken = { prepare: () => { throw new Error('D1 DB is overloaded') } } as unknown as D1Database;
+    const res = await handle(req('POST', '/api/sync', syncBody()), env({ DB: broken }));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('30');
+  });
+
+  it('answers 503 with Retry-After when the write hangs', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const never = new Promise<never>(() => {});
+      const stuck = { prepare: () => ({ bind: () => ({ run: () => never, all: () => never, first: () => never }) }) } as unknown as D1Database;
+      const pending = handle(req('POST', '/api/sync', syncBody()), env({ DB: stuck }));
+      await vi.advanceTimersByTimeAsync(3100);
+      const res = await pending;
+      expect(res.status).toBe(503);
+      expect(res.headers.get('retry-after')).toBe('30');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('accepts text/plain bodies, as sendBeacon sends them', async () => {
@@ -320,6 +376,65 @@ describe('/api/settings', () => {
     const res = await handle(req('GET', '/api/settings'), env({ DB: broken }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: expect.any(String) });
+  });
+  it('reads the database at most once per 30 seconds', async () => {
+    const { db, settings } = fakeDb();
+    const prepare = vi.spyOn(db, 'prepare');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const e = env({ DB: db, TYPESAFE_API_KEY: 'k' });
+    settings.set('showTimings', 'true');
+    for (let i = 0; i < 5; i++) expect(await json(await handle(req('GET', '/api/settings'), e))).toMatchObject({ showTimings: true, judgeAvailable: true });
+    expect(prepare).toHaveBeenCalledTimes(1);
+    settings.set('showTimings', 'false');
+    now.mockReturnValue(1_000_000 + 31_000);
+    expect(await json(await handle(req('GET', '/api/settings'), e))).toMatchObject({ showTimings: false });
+    expect(prepare).toHaveBeenCalledTimes(2);
+    now.mockRestore();
+  });
+  it('shares one read between simultaneous requests', async () => {
+    const { db } = fakeDb();
+    const prepare = vi.spyOn(db, 'prepare');
+    const e = env({ DB: db });
+    await Promise.all([1, 2, 3].map(() => handle(req('GET', '/api/settings'), e)));
+    expect(prepare).toHaveBeenCalledTimes(1);
+  });
+  it('serves the stale value when the database then fails, and always includes judgeAvailable', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, settings } = fakeDb();
+    settings.set('showTimings', 'true');
+    const now = vi.spyOn(Date, 'now').mockReturnValue(5_000_000);
+    expect(await json(await handle(req('GET', '/api/settings'), env({ DB: db })))).toMatchObject({ showTimings: true });
+    now.mockReturnValue(5_000_000 + 60_000);
+    const broken = { prepare: () => { throw new Error('D1 DB is overloaded') } } as unknown as D1Database;
+    const res = await handle(req('GET', '/api/settings'), env({ DB: broken, TYPESAFE_API_KEY: 'k' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ showTimings: true, aiJudge: true, judgeAvailable: true });
+    now.mockRestore();
+  });
+  it('serves the stale value when the database does not answer', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db } = fakeDb();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(9_000_000);
+    await handle(req('GET', '/api/settings'), env({ DB: db }));
+    now.mockReturnValue(9_000_000 + 60_000);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const never = new Promise<never>(() => {});
+      const stuck = { prepare: () => ({ all: () => never, bind: () => ({ all: () => never }) }) } as unknown as D1Database;
+      const pending = handle(req('GET', '/api/settings'), env({ DB: stuck }));
+      await vi.advanceTimersByTimeAsync(1600);
+      expect((await pending).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+      now.mockRestore();
+    }
+  });
+  it('is refreshed at once when the facilitator saves', async () => {
+    const { db } = fakeDb();
+    const e = env({ DB: db, ADMIN_PASSWORD: 'pw' });
+    expect(await json(await handle(req('GET', '/api/settings'), e))).toMatchObject({ showTimings: false });
+    await handle(req('PUT', '/api/admin/settings', { showTimings: true }, admin()), e);
+    expect(await json(await handle(req('GET', '/api/settings'), e))).toMatchObject({ showTimings: true });
   });
   it('gives up quickly when the database does not answer', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

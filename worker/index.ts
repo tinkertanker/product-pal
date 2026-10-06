@@ -13,10 +13,12 @@ import {
   type Limiter,
 } from '../src/shared/limits';
 import { canvasFromRow, checkAdminAuth, rowToSummary, syncRowFrom } from '../src/shared/admin';
-import { DEFAULT_SETTINGS, type ParticipantDetail } from '../src/shared/contracts';
+import { DEFAULT_SETTINGS, type ParticipantDetail, type Settings } from '../src/shared/contracts';
 import { stepFingerprint } from '../src/shared/canvas';
 import { buildJudgeRequest, interpretJudge } from '../src/shared/judge';
 import { buildMessages, maxTokensFor } from '../src/shared/prompts';
+import { missingInput, type PaidCall } from '../src/shared/readiness';
+import { cacheOf, freshValue, staleValue, type Cached } from '../src/shared/settingsCache';
 import { readSettingsPatch, toPublicSettings } from '../src/shared/settings';
 import {
   validateCoachRequest,
@@ -50,6 +52,7 @@ export interface Env {
   CODE_FAIL_LIMITER?: Limiter;
   JUDGE_CLIENT_LIMITER?: Limiter;
   SYNC_CLIENT_LIMITER?: Limiter;
+  SYNC_IP_LIMITER?: Limiter;
 }
 
 const BAD_CODE = "That code doesn't match. Check the screen and try again.";
@@ -65,7 +68,10 @@ const NO_DB = 'Progress storage is not set up.';
 const ADMIN_OFF = 'The admin page is not set up yet.';
 const BAD_PASSWORD = "That password doesn't match.";
 const MAX_BODY_BYTES = 1_000_000;
-const MAX_SYNC_BYTES = 200_000;
+const MAX_SYNC_BYTES = 64_000;
+/** How long the sync write may take before we tell the browser to try again later. */
+const SYNC_WRITE_TIMEOUT_MS = 3000;
+const SYNC_RETRY_AFTER_SECONDS = 30;
 
 const json = (body: unknown, status = 200, headers?: Record<string, string>) => Response.json(body, { status, headers });
 
@@ -172,31 +178,63 @@ const SETTINGS_TIMEOUT_MS = 1500;
 
 const SETTINGS_UNAVAILABLE = 'Settings are not available just now.';
 
-/**
- * Settings for every participant. If the database is slow or failing we answer
- * 503 quickly instead of sending defaults: the browser then keeps the settings
- * it last saw, so an outage cannot quietly undo a facilitator's choices or
- * leave the page waiting on a queued query.
- */
-async function handlePublicSettings(env: Env): Promise<Response> {
-  const headers = { 'Cache-Control': 'no-store' };
-  if (!env.DB) return json(toPublicSettings(DEFAULT_SETTINGS, judgeAvailable(env)), 200, headers);
+/** What D1 last told this isolate. Reset between tests. */
+let settingsCache: Cached<Settings> | null = null;
+let settingsRead: Promise<Settings> | null = null;
+
+export function resetSettingsCache(): void {
+  settingsCache = null;
+  settingsRead = null;
+}
+
+/** Reject if `work` takes longer than `ms`. */
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const settings = await Promise.race([
-      readSettings(env.DB),
+    return await Promise.race([
+      work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`no answer after ${SETTINGS_TIMEOUT_MS} ms`)), SETTINGS_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error(`no answer after ${ms} ms`)), ms);
       }),
     ]);
-    return json(toPublicSettings(settings, judgeAvailable(env)), 200, headers);
-  } catch (error) {
-    console.error('[settings] read failed:', error instanceof Error ? error.message : error);
-    return json({ error: SETTINGS_UNAVAILABLE }, 503, headers);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
 }
+
+/**
+ * Settings for every participant. D1 is read at most once per isolate per 30
+ * seconds, whatever the traffic. If the database is slow or failing we serve
+ * the last value we had; with none, we answer 503 quickly instead of sending
+ * defaults, so the browser keeps the settings it last saw and an outage cannot
+ * quietly undo a facilitator's choices.
+ */
+async function handlePublicSettings(env: Env): Promise<Response> {
+  const headers = { 'Cache-Control': 'no-store' };
+  if (!env.DB) return json(toPublicSettings(DEFAULT_SETTINGS, judgeAvailable(env)), 200, headers);
+  const fresh = freshValue(settingsCache, Date.now());
+  if (fresh) return json(toPublicSettings(fresh, judgeAvailable(env)), 200, headers);
+  try {
+    const db = env.DB;
+    settingsRead ??= readSettings(db).finally(() => {
+      settingsRead = null;
+    });
+    const settings = await withTimeout(settingsRead, SETTINGS_TIMEOUT_MS);
+    settingsCache = cacheOf(settings, Date.now());
+    return json(toPublicSettings(settings, judgeAvailable(env)), 200, headers);
+  } catch (error) {
+    console.error('[settings] read failed:', error instanceof Error ? error.message : error);
+    const stale = staleValue(settingsCache);
+    if (stale) return json(toPublicSettings(stale, judgeAvailable(env)), 200, headers);
+    return json({ error: SETTINGS_UNAVAILABLE }, 503, headers);
+  }
+}
+
+/** Refuse before any paid call is made on nothing. */
+const refuseEmpty = (call: PaidCall, canvas: Parameters<typeof missingInput>[1]): Response | null => {
+  const message = missingInput(call, canvas);
+  return message ? json({ error: message }, 400) : null;
+};
 
 async function handleJudge(request: Request, env: Env, config: Config, ip: string | null): Promise<Response> {
   const body = await readJsonBody(request);
@@ -210,6 +248,8 @@ async function handleJudge(request: Request, env: Env, config: Config, ip: strin
   if (!parsed.ok) return json({ error: parsed.error }, 400);
   const apiKey = env.TYPESAFE_API_KEY?.trim();
   if (!apiKey) return json({ error: JUDGE_OFF }, 503);
+  const empty = refuseEmpty({ kind: 'judge', step: parsed.value.step }, parsed.value.canvas);
+  if (empty) return empty;
 
   const allowed = await takeAll([
     { limiter: env.JUDGE_CLIENT_LIMITER, key: clientKey(parsed.value.clientId) },
@@ -239,14 +279,16 @@ async function handleSync(request: Request, env: Env, config: Config, ip: string
   if (!parsed.ok) return json({ error: parsed.error }, 400);
   if (!env.DB) return json({ error: NO_DB }, 503);
 
-  if (!(await takeAll([{ limiter: env.SYNC_CLIENT_LIMITER, key: clientKey(parsed.value.clientId) }]))) {
-    return tooManyRequests(SYNC_BUSY);
-  }
+  const allowed = await takeAll([
+    { limiter: env.SYNC_CLIENT_LIMITER, key: clientKey(parsed.value.clientId) },
+    { limiter: env.SYNC_IP_LIMITER, key: ipKey(ip) },
+  ]);
+  if (!allowed) return tooManyRequests(SYNC_BUSY);
   try {
-    await upsertParticipant(env.DB, syncRowFrom(parsed.value, Date.now()));
+    await withTimeout(upsertParticipant(env.DB, syncRowFrom(parsed.value, Date.now())), SYNC_WRITE_TIMEOUT_MS);
   } catch (error) {
     console.error('[sync] write failed:', error instanceof Error ? error.message : error);
-    return json({ error: NO_DB }, 503);
+    return json({ error: NO_DB }, 503, { 'Retry-After': String(SYNC_RETRY_AFTER_SECONDS) });
   }
   return new Response(null, { status: 204 });
 }
@@ -284,7 +326,11 @@ async function handleAdmin(request: Request, env: Env, path: string, ip: string 
     }
 
     if (path === '/api/admin/settings') {
-      if (method === 'GET') return json(toPublicSettings(await readSettings(db), judgeAvailable(env)));
+      if (method === 'GET') {
+        const settings = await readSettings(db);
+        settingsCache = cacheOf(settings, Date.now());
+        return json(toPublicSettings(settings, judgeAvailable(env)));
+      }
       if (method === 'PUT') {
         const body = await readJsonBody(request);
         const problem = bodyProblem(body);
@@ -292,7 +338,9 @@ async function handleAdmin(request: Request, env: Env, path: string, ip: string 
         const patch = readSettingsPatch(body ?? {});
         if (!patch.ok) return json({ error: patch.error }, 400);
         await writeSettings(db, patch.value);
-        return json(toPublicSettings(await readSettings(db), judgeAvailable(env)));
+        const settings = await readSettings(db);
+        settingsCache = cacheOf(settings, Date.now());
+        return json(toPublicSettings(settings, judgeAvailable(env)));
       }
     }
   } catch (error) {
@@ -333,6 +381,11 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
 
     const parsed = validateCoachRequest(body);
     if (!parsed.ok) return json({ error: parsed.error }, 400);
+    const { mode, canvas } = parsed.value;
+    if (mode === 'statement' || mode === 'assumptions' || mode === 'brief') {
+      const empty = refuseEmpty({ kind: mode }, canvas);
+      if (empty) return empty;
+    }
 
     const allowed = await takeAll([
       { limiter: env.COACH_CLIENT_LIMITER, key: clientKey(parsed.value.clientId) },
