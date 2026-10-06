@@ -231,9 +231,10 @@ export function CheckBar({ stepId, passed, judgeOn, view, error, emptyMessage, n
             {checking ? 'Checking…' : passed ? 'Check again' : 'Check my step'}
           </button>
         )}
-        <button type="button" className="link link--quiet" onClick={onQuestions} disabled={busy}>
+        <button type="button" className="link link--quiet" onClick={onQuestions} disabled={busy} title={busy ? 'Your coach is busy. Try again in a moment.' : undefined}>
           Ask me questions
         </button>
+        {busy && <span className="field__help">Your coach is busy. Try again in a moment.</span>}
       </div>
       {emptyMessage && (
         <p className="notice" role="status">

@@ -46,7 +46,7 @@ export function JudgeCard({ view, error, onCheck, stepId, nudge }: Props) {
   if (view.kind === 'none' && !error) return null;
 
   return (
-    <div className="judge-wrap" aria-live="polite">
+    <div className="judge-wrap" aria-live="polite" aria-busy={nudge?.pending ? true : undefined}>
       {error && (
         <p className="error" role="alert">
           {error}

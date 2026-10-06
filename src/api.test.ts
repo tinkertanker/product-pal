@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parsePublicSettings, requestJudgement, streamCoach, UnauthorisedError, type CoachBody } from './api';
+import { COACH_FIRST_BYTE_MS, COACH_IDLE_MS, parsePublicSettings, requestJudgement, streamCoach, UnauthorisedError, type CoachBody } from './api';
 import { endMarker } from './shared/coachStream';
 import { emptyCanvas } from './shared/canvas';
 
@@ -53,6 +53,66 @@ describe('streamCoach', () => {
   it('throws the server message for an error status', async () => {
     const { result } = await run(Response.json({ error: 'Sorry, the coach could not answer just now.' }, { status: 502 }));
     await expect(result).rejects.toThrow('could not answer');
+  });
+});
+
+describe('streamCoach timeouts', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** A response whose body the test feeds by hand. */
+  const manual = () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({ start: (c) => (controller = c) });
+    return { response: new Response(stream), controller };
+  };
+  const encoder = new TextEncoder();
+
+  it('gives up if nothing arrives for a minute after the first bytes', async () => {
+    vi.useFakeTimers();
+    const { response, controller } = manual();
+    vi.stubGlobal('fetch', async () => response);
+    const result = streamCoach(body, () => undefined, new AbortController().signal);
+    const caught = expect(result).rejects.toThrow('stopped partway');
+    await vi.advanceTimersByTimeAsync(10);
+    controller.enqueue(encoder.encode('Hello'));
+    await vi.advanceTimersByTimeAsync(COACH_IDLE_MS - 1);
+    controller.enqueue(encoder.encode(' there'));
+    await vi.advanceTimersByTimeAsync(COACH_IDLE_MS - 1);
+    await vi.advanceTimersByTimeAsync(2);
+    await caught;
+  });
+
+  it('waits longer for the first bytes than between chunks', async () => {
+    vi.useFakeTimers();
+    const { response, controller } = manual();
+    vi.stubGlobal('fetch', async () => response);
+    const seen: string[] = [];
+    const result = streamCoach(body, (t) => seen.push(t), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(COACH_FIRST_BYTE_MS - 1);
+    controller.enqueue(encoder.encode('Late start' + endMarker('ok')));
+    controller.close();
+    expect(await result).toEqual({ text: 'Late start', truncated: false });
+  });
+
+  it('gives up if the server never answers', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))),
+    );
+    const caught = expect(streamCoach(body, () => undefined, new AbortController().signal)).rejects.toThrow('stopped partway');
+    await vi.advanceTimersByTimeAsync(COACH_FIRST_BYTE_MS + 1);
+    await caught;
+  });
+
+  it('passes an abort from the caller through untouched', async () => {
+    const { response } = manual();
+    vi.stubGlobal('fetch', async () => response);
+    const controller = new AbortController();
+    const result = streamCoach(body, () => undefined, controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
 

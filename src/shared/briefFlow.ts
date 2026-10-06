@@ -66,6 +66,28 @@ export const questionsOpener = (step: StepId): string => `${OPENER_PREFIX} ${get
 export const isQuestionsOpener = (text: string): boolean => text.startsWith(OPENER_PREFIX) || text.startsWith('Grill me on my');
 
 // ---------------------------------------------------------------------------
+// After a coach run ends
+// ---------------------------------------------------------------------------
+
+/** How a main coach run ended, as the screen saw it. */
+export type RunEnd = {
+  /** The reply, or null if the request failed. */
+  text: string | null;
+  /** The participant pressed Start over while it ran. */
+  cancelled: boolean;
+  /** Another run took over, so this one no longer owns the screen. */
+  superseded: boolean;
+};
+
+/** What the caller does next: keep what streamed in, put the old text back, or leave everything as it is. */
+export type AfterRun = 'keep' | 'restore' | 'nothing';
+
+export function afterRun(end: RunEnd): AfterRun {
+  if (end.cancelled || end.superseded) return 'nothing';
+  return end.text === null || end.text.trim() === '' ? 'restore' : 'keep';
+}
+
+// ---------------------------------------------------------------------------
 // "More" boxes
 // ---------------------------------------------------------------------------
 

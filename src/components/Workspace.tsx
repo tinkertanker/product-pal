@@ -8,12 +8,13 @@ import {
   isStepComplete,
   missingBeforeBrief,
   setField,
+  stepFingerprint,
   type Canvas,
   type ChatMessage,
   type StepId,
 } from '../shared/canvas';
 import { parseAssumptions, parseFit } from '../shared/coachOutput';
-import { questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
+import { afterRun, questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
 import { clarificationsFrom, nicknameFor, type CoachMode, type Judgement, type PublicSettings } from '../shared/contracts';
 import { emptyBoxesMessage, failedCheckIds, judgeView, needsAutoCheck, shouldNudge, canCheck } from '../shared/judgeFlow';
 import { IDG_CREDIT, IDG_URL, STEPS } from '../shared/steps';
@@ -28,6 +29,9 @@ import { MobileProgress, Stepper } from './Stepper';
 import { Sticker } from './Sticker';
 import { CheckBar, StepHeader, StepView } from './StepView';
 import { useSync } from './useSync';
+
+/** How a coach run ended; see `afterRun`. */
+type RunResult = { result: CoachResult | null; cancelled: boolean; superseded: boolean };
 
 type Busy = { kind: CoachMode; step: StepId } | null;
 
@@ -78,7 +82,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   /** Screens where "Check my step" was pressed with boxes empty; the message then follows what is still empty. */
   const [tried, setTried] = useState<ReadonlySet<StepId>>(() => new Set());
   const checksRunning = useRef(new Set<StepId>());
-  const nudgeAbort = useRef<AbortController | null>(null);
+  const nudgeAbort = useRef<Partial<Record<StepId, AbortController>>>({});
   const nudgeStarted = useRef<Partial<Record<StepId, string>>>({});
   const generation = useRef(0);
   const canvasRef = useRef(canvas);
@@ -117,7 +121,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   useEffect(
     () => () => {
       abortRef.current?.abort();
-      nudgeAbort.current?.abort();
+      for (const c of Object.values(nudgeAbort.current)) c.abort();
     },
     [],
   );
@@ -145,32 +149,40 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   const setPanel = (stepId: StepId, mode: PanelMode) => setPanelModes((p) => ({ ...p, [stepId]: mode }));
 
   /**
-   * Run one coach request. Only one at a time. Resolves with the reply, or
-   * null on failure; the caller then undoes whatever it streamed in.
+   * Run one coach request. Only one at a time: callers check `abortRef` first,
+   * and a run that finds another in progress never starts or cancels it.
+   * Resolves with the reply (null on failure) and how the run ended, so the
+   * caller can ask `afterRun` what to do with what it streamed in.
    */
-  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>, onText: (text: string) => void): Promise<CoachResult | null> {
-    abortRef.current?.abort();
+  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>, onText: (text: string) => void): Promise<RunResult> {
+    if (abortRef.current) {
+      setError({ step: stepId, message: 'Your coach was busy with something else, so that did not go through. Please try again in a moment.' });
+      return { result: null, cancelled: false, superseded: true };
+    }
+    const gen = generation.current;
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy({ kind, step: stepId });
     setError(null);
+    let result: CoachResult | null = null;
     try {
-      const result = await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, onText, controller.signal);
-      if (result.truncated) setError({ step: stepId, message: TRUNCATED[kind] });
-      return result;
+      result = await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, (t) => gen === generation.current && onText(t), controller.signal);
+      if (result.truncated && gen === generation.current) setError({ step: stepId, message: TRUNCATED[kind] });
     } catch (e) {
       if (e instanceof UnauthorisedError) {
         onUnauthorised();
-      } else if (!controller.signal.aborted) {
+      } else if (!controller.signal.aborted && gen === generation.current) {
         setError({ step: stepId, message: e instanceof Error ? e.message : "Your coach couldn't answer just now. Please try again in a moment." });
       }
-      return null;
-    } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
-        setBusy(null);
-      }
     }
+    const cancelled = gen !== generation.current;
+    const superseded = !cancelled && abortRef.current !== controller;
+    if (superseded) setError({ step: stepId, message: 'Your coach switched to something else, so that reply was set aside. Please try again.' });
+    if (abortRef.current === controller) {
+      abortRef.current = null;
+      setBusy(null);
+    }
+    return { result: result && !cancelled ? result : null, cancelled, superseded };
   }
 
   // ---- Step checker ------------------------------------------------------
@@ -194,9 +206,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       });
       if (gen !== generation.current) return null;
       update((c) => ({ ...c, judgements: { ...c.judgements, [stepId]: judgement } }));
-      // Only the screen the participant is on gets a nudge.
+      // A miss gets one nudge, whichever screen is showing. Skip it if they typed during the check.
       const already = nudgeStarted.current[stepId] ?? nudgesRef.current[stepId]?.fingerprint;
-      if (stepRef.current === stepId && shouldNudge(judgement, already)) void startNudge(stepId, judgement, snapshot, gen);
+      if (judgement.fingerprint === stepFingerprint(canvasRef.current, stepId) && shouldNudge(judgement, already)) void startNudge(stepId, judgement, snapshot, gen);
       return judgement;
     } catch (e) {
       if (e instanceof UnauthorisedError) onUnauthorised();
@@ -224,9 +236,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   async function startNudge(stepId: StepId, judgement: Judgement, snapshot: Canvas, gen: number) {
     const { fingerprint } = judgement;
     nudgeStarted.current[stepId] = fingerprint;
-    nudgeAbort.current?.abort();
+    nudgeAbort.current[stepId]?.abort();
     const controller = new AbortController();
-    nudgeAbort.current = controller;
+    nudgeAbort.current[stepId] = controller;
     const put = (text: string, finished: boolean) => {
       if (gen === generation.current) setNudges((n) => ({ ...n, [stepId]: { fingerprint, text, done: finished } }));
     };
@@ -244,7 +256,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       if (gen === generation.current) setNudges((n) => without(n, stepId));
       if (nudgeStarted.current[stepId] === fingerprint) delete nudgeStarted.current[stepId];
     } finally {
-      if (nudgeAbort.current === controller) nudgeAbort.current = null;
+      if (nudgeAbort.current[stepId] === controller) delete nudgeAbort.current[stepId];
     }
   }
 
@@ -256,12 +268,13 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
 
   // ---- Ask me questions --------------------------------------------------
   async function sendChat(stepId: StepId, history: ChatMessage[]) {
+    if (abortRef.current) return;
     // `history` already ends with the participant's turn.
     setChat(stepId, () => [...history, { role: 'assistant', content: '' }]);
-    const result = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
+    const end = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
       setChat(stepId, (m) => [...m.slice(0, -1), { role: 'assistant', content: t }]),
     );
-    if (result === null) {
+    if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') {
       // Drop the coach's turn, even if part of it arrived, so it isn't saved or sent back.
       // If only the automatic opener is left, clear it so "Ask me questions" starts afresh.
       setChat(stepId, (m) => {
@@ -272,29 +285,32 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   }
 
   function askQuestions() {
-    if (busy) return;
+    if (abortRef.current) return;
     setPanel(id, 'questions');
     if (canvas.chats[id].length === 0) void sendChat(id, [{ role: 'user', content: questionsOpener(id) }]);
   }
 
   function answerQuestion(text: string) {
+    if (abortRef.current) return;
     void sendChat(id, [...canvas.chats[id], { role: 'user', content: text }]);
   }
 
   function restartQuestions() {
+    if (abortRef.current) return;
     setChat(id, () => []);
     void sendChat(id, [{ role: 'user', content: questionsOpener(id) }]);
   }
 
   // ---- Draft it for me ---------------------------------------------------
   async function draftStatement() {
-    if (busy) return;
+    if (abortRef.current) return;
     const previous = canvas.why.statement;
     const request = canvasForRequest(setField(canvas, 'why', 'statement', ''));
     const go = async () => {
+      if (abortRef.current) return;
       update((c) => setField(c, 'why', 'statement', ''));
-      const result = await run('statement', 'why', { canvas: request, clarifications: clarificationsFrom(canvas.chats) }, (t) => update((c) => setField(c, 'why', 'statement', t)));
-      if (result === null || result.text.trim() === '') update((c) => setField(c, 'why', 'statement', previous));
+      const end = await run('statement', 'why', { canvas: request, clarifications: clarificationsFrom(canvas.chats) }, (t) => update((c) => setField(c, 'why', 'statement', t)));
+      if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') update((c) => setField(c, 'why', 'statement', previous));
     };
     if (previous.trim()) {
       setConfirm({
@@ -310,10 +326,10 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
 
   // ---- Suggest three -----------------------------------------------------
   async function suggestAssumptions() {
-    if (busy) return;
+    if (abortRef.current) return;
     setSuggestions([]);
-    const result = await run('assumptions', 'bet', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, (t) => setSuggestions(parseAssumptions(t)));
-    if (result === null) setSuggestions([]);
+    const end = await run('assumptions', 'bet', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, (t) => setSuggestions(parseAssumptions(t)));
+    if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') setSuggestions([]);
   }
 
   function pickSuggestion(text: string) {
@@ -329,17 +345,18 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   function startBrief() {
     const latest = canvasRef.current;
     const write = async () => {
+      if (abortRef.current) return;
       const previous = { document: latest.brief.document, fit: latest.brief.fit };
       setPanelModes((p) => ({ ...p, brief: undefined }));
       setReview('');
       update((c) => ({ ...c, brief: { ...c.brief, document: '', fit: '' } }));
       const request = canvasForRequest({ ...latest, brief: { ...latest.brief, document: '', fit: '' } });
-      const result = await run('brief', 'brief', { canvas: request, clarifications: clarificationsFrom(latest.chats) }, (t) => {
+      const end = await run('brief', 'brief', { canvas: request, clarifications: clarificationsFrom(latest.chats) }, (t) => {
         const { fit, rest } = parseFit(t);
         update((c) => ({ ...c, brief: { ...c.brief, fit: fit ?? '', document: rest } }));
       });
       // On failure, put back the brief they had, edits included.
-      if (result === null || result.text.trim() === '') update((c) => ({ ...c, brief: { ...c.brief, ...previous } }));
+      if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') update((c) => ({ ...c, brief: { ...c.brief, ...previous } }));
     };
     if (latest.brief.document.trim()) {
       setConfirm({
@@ -358,7 +375,8 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
    * earlier is still unsigned-off, list it and let the participant go ahead anyway.
    */
   async function writeBrief(anyway = false) {
-    if (busy || checksRunning.current.has('brief')) return;
+    if (abortRef.current || checksRunning.current.has('brief')) return;
+    const gen = generation.current;
     const snapshot = canvasRef.current;
     const missingBoxes = emptyBoxesMessage(snapshot, 'brief') !== '';
     setTried((t) => {
@@ -376,21 +394,28 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
         const verdict = currentJudgement(snapshot, 'brief') ?? (await runCheck('brief'));
         if (verdict) current = { ...snapshot, judgements: { ...snapshot.judgements, brief: verdict } };
       }
+      // Start over may have cleared everything while the check ran.
+      if (gen !== generation.current) return;
       const missing = missingBeforeBrief(current, completion);
       if (missing.length > 0) {
         setGate(missing);
         return;
       }
     }
+    if (gen !== generation.current) return;
+    if (abortRef.current) {
+      setError({ step: 'brief', message: 'Your coach was busy, so your brief has not started. Press Write my brief to try again.' });
+      return;
+    }
     startBrief();
   }
 
   async function reviewBrief() {
-    if (busy) return;
+    if (abortRef.current) return;
     setPanel('brief', 'review');
     setReview('');
-    const result = await run('review', 'brief', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, setReview);
-    if (result === null) setReview('');
+    const end = await run('review', 'brief', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, setReview);
+    if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') setReview('');
   }
 
   // ---- Start over --------------------------------------------------------
@@ -401,7 +426,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       confirmLabel: 'Yes, clear it',
       onConfirm: () => {
         abortRef.current?.abort();
-        nudgeAbort.current?.abort();
+        abortRef.current = null;
+        for (const c of Object.values(nudgeAbort.current)) c.abort();
+        nudgeAbort.current = {};
         setBusy(null);
         generation.current += 1;
         checksRunning.current.clear();
@@ -533,6 +560,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                 available={available}
                 onMode={(m) => setPanel(id, m)}
                 busy={stepBusy}
+                locked={busy !== null}
                 error={stepError}
                 reviewText={review}
                 chat={chat}

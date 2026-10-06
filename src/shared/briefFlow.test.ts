@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyCanvas, setField } from './canvas';
 import { getStep } from './steps';
-import { isQuestionsOpener, questionsOpener, revealNext, stampJoined, stampMeta, statementMissing, statementMissingMessage, visibleFields, wordCount } from './briefFlow';
+import { afterRun, isQuestionsOpener, questionsOpener, revealNext, stampJoined, stampMeta, statementMissing, statementMissingMessage, visibleFields, wordCount } from './briefFlow';
 
 const ids = (fields: { id: string }[]) => fields.map((f) => f.id);
 
@@ -102,5 +102,42 @@ describe('stampMeta', () => {
   it('ignores spaces', () => {
     const joined = stampMeta(emptyCanvas(), 100);
     expect(stampMeta(setField(joined, 'who', 'who', '   '), 150).meta.firstInputAt).toBe(0);
+  });
+});
+
+describe('afterRun', () => {
+  const end = { text: 'A reply.', cancelled: false, superseded: false };
+  it('keeps a reply that arrived', () => {
+    expect(afterRun(end)).toBe('keep');
+  });
+  it('restores the old text when the request failed or came back empty', () => {
+    expect(afterRun({ ...end, text: null })).toBe('restore');
+    expect(afterRun({ ...end, text: '  \n' })).toBe('restore');
+  });
+  it('leaves everything alone when another run took over', () => {
+    expect(afterRun({ ...end, superseded: true })).toBe('nothing');
+    expect(afterRun({ ...end, text: null, superseded: true })).toBe('nothing');
+  });
+  it('restores and continues nothing after Start over', () => {
+    expect(afterRun({ ...end, cancelled: true })).toBe('nothing');
+    expect(afterRun({ ...end, text: null, cancelled: true })).toBe('nothing');
+  });
+});
+
+describe('brief screen boxes', () => {
+  const brief = getStep('brief');
+  it('shows the smallest-build box unless an idea is parked', () => {
+    expect(ids(visibleFields(emptyCanvas(), brief, 0))).toEqual(['firstTwoMinutes', 'unhappyPath', 'smallestBuild']);
+    const parked = setField(emptyCanvas(), 'who', 'parkedIdea', 'A ward chat bot');
+    expect(ids(visibleFields(parked, brief, 0))).toEqual(['firstTwoMinutes', 'unhappyPath']);
+  });
+  it('reveals the single more box in one click, with or without a parked idea', () => {
+    const c = emptyCanvas();
+    expect(revealNext(c, brief, 0)).toEqual({ revealed: 1, fieldId: 'where' });
+    expect(ids(visibleFields(c, brief, 1))).toContain('where');
+    expect(revealNext(c, brief, 1)).toBeNull();
+    const parked = setField(c, 'who', 'parkedIdea', 'A ward chat bot');
+    expect(revealNext(parked, brief, 0)).toEqual({ revealed: 1, fieldId: 'where' });
+    expect(ids(visibleFields(parked, brief, 1))).toEqual(['firstTwoMinutes', 'unhappyPath', 'where']);
   });
 });

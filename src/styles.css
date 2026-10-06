@@ -1602,3 +1602,14 @@ button.prow.is-selected {
 .grill-link__credit {
   margin-left: 0.25em;
 }
+
+.grill-link p {
+  margin: 0;
+}
+.copy-fallback {
+  flex-basis: 100%;
+  width: 100%;
+}
+.copy-fallback .prompt-box {
+  min-height: 8em;
+}

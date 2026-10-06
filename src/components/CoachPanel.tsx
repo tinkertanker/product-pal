@@ -12,8 +12,10 @@ type Props = {
   mode: PanelMode | null;
   available: PanelMode[];
   onMode: (mode: PanelMode) => void;
-  /** A request for this step is running. */
+  /** A request for this step is running (drives the "thinking" line). */
   busy: boolean;
+  /** Any coach request is running, on any step. Send and Start again wait for it. */
+  locked: boolean;
   error: string;
   reviewText: string;
   chat: ChatMessage[];
@@ -67,7 +69,7 @@ function ReviewReply({ text, busy }: { text: string; busy: boolean }) {
   );
 }
 
-function QuestionChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; busy: boolean; onSend: (t: string) => void; onRestart: () => void }) {
+function QuestionChat({ chat, busy, locked, onSend, onRestart }: { chat: ChatMessage[]; busy: boolean; locked: boolean; onSend: (t: string) => void; onRestart: () => void }) {
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const last = chat[chat.length - 1];
@@ -81,7 +83,7 @@ function QuestionChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; 
   function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || busy) return;
+    if (!text || locked) return;
     onSend(text);
     setDraft('');
   }
@@ -127,10 +129,10 @@ function QuestionChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; 
           maxLength={4000}
         />
         <div className="chat__actions">
-          <button type="submit" className="btn btn--primary" disabled={busy || draft.trim().length === 0}>
+          <button type="submit" className="btn btn--primary" disabled={locked || draft.trim().length === 0}>
             Send
           </button>
-          <button type="button" className="btn btn--quiet" onClick={onRestart} disabled={busy}>
+          <button type="button" className="btn btn--quiet" onClick={onRestart} disabled={locked}>
             Start again
           </button>
         </div>
@@ -140,7 +142,7 @@ function QuestionChat({ chat, busy, onSend, onRestart }: { chat: ChatMessage[]; 
 }
 
 export function CoachPanel(props: Props) {
-  const { mode, available, onMode, busy, error, reviewText, chat, onSendChat, onRestartChat } = props;
+  const { mode, available, onMode, busy, locked, error, reviewText, chat, onSendChat, onRestartChat } = props;
   const ref = useRef<HTMLElement>(null);
 
   // On a narrow screen the panel sits below the boxes; bring it into view when it opens.
@@ -172,7 +174,7 @@ export function CoachPanel(props: Props) {
         </div>
       )}
       {mode === 'review' && <ReviewReply text={reviewText} busy={busy} />}
-      {mode === 'questions' && <QuestionChat chat={chat} busy={busy} onSend={onSendChat} onRestart={onRestartChat} />}
+      {mode === 'questions' && <QuestionChat chat={chat} busy={busy} locked={locked} onSend={onSendChat} onRestart={onRestartChat} />}
     </aside>
   );
 }

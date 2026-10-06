@@ -6,7 +6,7 @@ import type { JudgeView } from '../shared/judgeFlow';
 import { GRILL_CREDIT, GRILL_CREDIT_URL, GRILL_PROMPT } from '../shared/grillPrompt';
 import { kickoffMessage } from '../shared/kickoff';
 import { getStep } from '../shared/steps';
-import { CopyButton, copyText } from './CopyButton';
+import { CopyButton, SelectedText, copyText } from './CopyButton';
 import { downloadText } from './download';
 import { JudgeCard, type NudgeView } from './JudgeCard';
 
@@ -41,25 +41,28 @@ type Props = {
 function GrillLink() {
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
   return (
-    <p className="grill-link">
-      <button
-        type="button"
-        className="link link--small"
-        title={GRILL_CREDIT}
-        onClick={async () => setCopied((await copyText(GRILL_PROMPT)) ? 'done' : 'failed')}
-      >
-        Take the grilling prompt with you
-      </button>
-      {copied !== 'idle' && (
-        <span className="grill-link__credit" role="status">
-          {copied === 'done' ? ' Copied. ' : ' Press Ctrl/Cmd+C after selecting it. '}
-          {GRILL_CREDIT}.{' '}
-          <a href={GRILL_CREDIT_URL} target="_blank" rel="noreferrer">
-            github.com/mattpocock/skills
-          </a>
-        </span>
-      )}
-    </p>
+    <div className="grill-link">
+      <p>
+        <button
+          type="button"
+          className="link link--small"
+          title={GRILL_CREDIT}
+          onClick={async () => setCopied((await copyText(GRILL_PROMPT)) ? 'done' : 'failed')}
+        >
+          Take the grilling prompt with you
+        </button>
+        {copied !== 'idle' && (
+          <span className="grill-link__credit" role="status">
+            {copied === 'done' ? ' Copied. ' : " Copying didn't work in this browser. Copy it from the box below. "}
+            {GRILL_CREDIT}.{' '}
+            <a href={GRILL_CREDIT_URL} target="_blank" rel="noreferrer">
+              github.com/mattpocock/skills
+            </a>
+          </span>
+        )}
+      </p>
+      {copied === 'failed' && <SelectedText text={GRILL_PROMPT} label="The grilling prompt" />}
+    </div>
   );
 }
 
@@ -67,6 +70,11 @@ export function BriefStep({ canvas, busy, writing, judgeOn, checking, onBrief, o
   const { brief } = canvas;
   const hasText = brief.document.trim().length > 0;
   const fileName = agentFileName(brief.platform);
+  const selectBrief = () => {
+    const box = document.getElementById('brief-document') as HTMLTextAreaElement | null;
+    box?.focus();
+    box?.select();
+  };
 
   return (
     <>
@@ -93,9 +101,10 @@ export function BriefStep({ canvas, busy, writing, judgeOn, checking, onBrief, o
             {checking ? 'Checking…' : 'Write my brief'}
           </button>
         )}
-        <button type="button" className="link link--quiet" onClick={onQuestions} disabled={busy}>
+        <button type="button" className="link link--quiet" onClick={onQuestions} disabled={busy} title={busy ? 'Your coach is busy. Try again in a moment.' : undefined}>
           Ask me questions
         </button>
+        {busy && <span className="field__help">Your coach is busy. Try again in a moment.</span>}
       </div>
 
       {emptyMessage && (
@@ -163,11 +172,11 @@ export function BriefStep({ canvas, busy, writing, judgeOn, checking, onBrief, o
 
       {hasText && !writing && (
         <div className="actions">
-          <CopyButton text={brief.document} label="Copy brief" className="btn btn--primary" />
+          <CopyButton text={brief.document} label="Copy brief" className="btn btn--primary" onFailed={selectBrief} />
           <button type="button" className="btn" onClick={() => downloadText(fileName, agentFileContent(canvas))}>
             Download as {fileName}
           </button>
-          <CopyButton text={kickoffMessage(canvas)} label="Copy kick-off message" />
+          <CopyButton text={kickoffMessage(canvas)} label="Copy kick-off message" manualText={kickoffMessage(canvas)} manualLabel="Your kick-off message" />
           <button type="button" className="btn" onClick={onReview} disabled={busy}>
             Review my brief
           </button>
