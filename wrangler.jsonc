@@ -38,7 +38,9 @@
     // Step-checker calls per browser (clientId).
     { "name": "JUDGE_CLIENT_LIMITER", "namespace_id": "1004", "simple": { "limit": 30, "period": 60 } },
     // Progress syncs per browser (clientId).
-    { "name": "SYNC_CLIENT_LIMITER", "namespace_id": "1005", "simple": { "limit": 30, "period": 60 } }
+    { "name": "SYNC_CLIENT_LIMITER", "namespace_id": "1005", "simple": { "limit": 30, "period": 60 } },
+    // Progress syncs per IP. High, because a whole room may share one address.
+    { "name": "SYNC_IP_LIMITER", "namespace_id": "1006", "simple": { "limit": 300, "period": 60 } }
   ],
   "observability": { "enabled": true }
 }

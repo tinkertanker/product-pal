@@ -45,28 +45,38 @@ export function getClientId(): string {
   return id;
 }
 
+/** A coach nudge, kept with the fingerprint of the judgement it answers so a reload does not lose it. */
+export type SavedNudge = { fingerprint: string; text: string };
+
 export type SavedState = {
   canvas: Canvas;
-  /** The coach's latest challenge for each step, so a reload does not lose it. */
-  challenges: Partial<Record<StepId, string>>;
+  nudges: Partial<Record<StepId, SavedNudge>>;
   step: number;
 };
 
-export function loadState(): SavedState {
-  const fallback: SavedState = { canvas: emptyCanvas(), challenges: {}, step: 0 };
-  const raw = read(STATE_KEY);
+/** Read a saved state from untrusted text (pure; `loadState` supplies the text). */
+export function parseSavedState(raw: string | null): SavedState {
+  const fallback: SavedState = { canvas: emptyCanvas(), nudges: {}, step: 0 };
   if (!raw) return fallback;
   try {
     const data = JSON.parse(raw) as Record<string, unknown>;
-    const challenges: SavedState['challenges'] = {};
-    const c = (typeof data.challenges === 'object' && data.challenges !== null ? data.challenges : {}) as Record<string, unknown>;
-    for (const id of STEP_IDS) if (typeof c[id] === 'string') challenges[id] = c[id] as string;
-    const step = typeof data.step === 'number' && data.step >= 0 && data.step < STEP_IDS.length ? Math.floor(data.step) : 0;
-    return { canvas: normaliseCanvas(data.canvas), challenges, step };
+    // Saves from the first version kept a "challenge" per old step id. Those are dropped: only `nudges` is read.
+    const nudges: SavedState['nudges'] = {};
+    const n = (typeof data.nudges === 'object' && data.nudges !== null ? data.nudges : {}) as Record<string, unknown>;
+    for (const id of STEP_IDS) {
+      const v = n[id] as Partial<SavedNudge> | undefined;
+      if (v && typeof v.fingerprint === 'string' && typeof v.text === 'string' && v.text.length > 0) nudges[id] = { fingerprint: v.fingerprint, text: v.text };
+    }
+    // An old save can be on step 5 or 6 of seven; keep the position inside the five screens.
+    const saved = typeof data.step === 'number' && Number.isFinite(data.step) ? Math.floor(data.step) : 0;
+    const step = Math.min(Math.max(saved, 0), STEP_IDS.length - 1);
+    return { canvas: normaliseCanvas(data.canvas), nudges, step };
   } catch {
     return fallback;
   }
 }
+
+export const loadState = (): SavedState => parseSavedState(read(STATE_KEY));
 
 export const saveState = (state: SavedState): void => write(STATE_KEY, JSON.stringify(state));
 export const clearState = (): void => remove(STATE_KEY);

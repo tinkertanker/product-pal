@@ -1,7 +1,7 @@
 // Pure rules for the facilitator side: the password check, and turning a
 // participant's sync into a stored row and a stored row into a summary.
 
-import { STEP_IDS, normaliseCanvas, type Canvas, type StepId } from './canvas';
+import { normaliseCanvas, normaliseDone, type Canvas, type StepId } from './canvas';
 import { nicknameFor, type ParticipantSummary, type SyncRequest } from './contracts';
 
 // ---------------------------------------------------------------------------
@@ -54,16 +54,16 @@ export function syncRowFrom(request: SyncRequest, now: number): SyncRow {
     nickname: nicknameFor(request.clientId),
     canvas: JSON.stringify(request.canvas),
     done: JSON.stringify(request.done),
-    build_prompt_length: request.canvas.build.prompt.trim().length,
+    /** The column keeps its old name; it now holds the length of the brief. */
+    build_prompt_length: request.canvas.brief.document.trim().length,
     now,
   };
 }
 
 function parseDone(text: string): StepId[] {
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (!Array.isArray(parsed)) return [];
-    return STEP_IDS.filter((id) => parsed.includes(id));
+    // Old rows hold the first version's step ids; normaliseDone maps them.
+    return normaliseDone(JSON.parse(text));
   } catch {
     return [];
   }

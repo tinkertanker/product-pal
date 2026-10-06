@@ -1,45 +1,30 @@
-import { useState } from 'react';
-import { IDG_CREDIT, IDG_URL, PLAYLIST_URL, embedUrl, type StepDef } from '../shared/steps';
+import { useState, type ReactNode } from 'react';
+import { IDG_CREDIT, IDG_URL, PLAYLIST_URL, STEPS, embedUrl, type StepDef } from '../shared/steps';
 import { getField, type Canvas, type CoachStepId } from '../shared/canvas';
+import { revealNext, statementMissingMessage, visibleFields } from '../shared/briefFlow';
 import type { JudgeView } from '../shared/judgeFlow';
 import { FieldInput } from './FieldInput';
-import { JudgeCard } from './JudgeCard';
+import { JudgeCard, type NudgeView } from './JudgeCard';
 import { STEP_STICKER, Sticker } from './Sticker';
 
-const FOUR_CS = ['clarity', 'consequence', 'cause', 'confirmation'];
-
-type Props = {
-  step: StepDef;
-  canvas: Canvas;
-  onField: (fieldId: string, value: string) => void;
-  canChallenge: boolean;
-  busy: boolean;
-  onChallenge: () => void;
-  onGrill: () => void;
-  /** The AI step checker is on for this session. */
-  judgeOn: boolean;
-  /** The length rule is met, so the checker can look at this step. */
-  canCheck: boolean;
-  judgeView: JudgeView;
-  judgeError: string;
-  onCheck: () => void;
-};
+// ---------------------------------------------------------------------------
+// Header and the two things tucked behind a tap
+// ---------------------------------------------------------------------------
 
 export function StepHeader({ step, showTimings }: { step: StepDef; showTimings: boolean }) {
   return (
     <header className="step-head">
-      <p className="step-head__num">Step {step.number} of 7</p>
+      <p className="step-head__num">
+        Step {step.number} of {STEPS.length}
+      </p>
       <div className="step-head__row">
         <h2 id="step-title" tabIndex={-1}>
           {step.title}
         </h2>
-        {showTimings && <span className="chip">{step.minutesLabel} min</span>}
+        {showTimings && <span className="chip">{step.minutes} min</span>}
         <Sticker name={STEP_STICKER[step.id]} size={64} eager className="sticker--step" />
       </div>
-      <p className="why">
-        <strong>Why this matters.</strong> {step.whyItMatters}
-      </p>
-      <Video step={step} />
+      <p className="why">{step.intro}</p>
     </header>
   );
 }
@@ -49,7 +34,7 @@ function Video({ step }: { step: StepDef }) {
   const [opened, setOpened] = useState(false);
   return (
     <details className="disclosure" onToggle={(e) => e.currentTarget.open && setOpened(true)}>
-      <summary>Watch the video</summary>
+      <summary>Watch the video (optional)</summary>
       <div className="video">
         {opened && (
           <iframe
@@ -72,108 +57,191 @@ function Video({ step }: { step: StepDef }) {
   );
 }
 
-export function Hints({ step }: { step: StepDef }) {
+/** "Need a nudge?" and "Watch the video (optional)": closed until asked for. */
+export function StepHelp({ step }: { step: StepDef }) {
   return (
-    <details className="disclosure disclosure--hints">
-      <summary>How to make this box stronger</summary>
-      <dl className="hints">
-        <div>
-          <dt>Shape it like this</dt>
-          <dd>{step.shapeItLike}</dd>
-        </div>
-        <div>
-          <dt>Watch out for</dt>
-          <dd>{step.avoid}</dd>
-        </div>
-      </dl>
-    </details>
+    <div className="help">
+      <details className="disclosure">
+        <summary>Need a nudge?</summary>
+        <p className="help__text">{step.nudge}</p>
+      </details>
+      <Video step={step} />
+    </div>
   );
 }
 
-export function StepView({ step, canvas, onField, canChallenge, busy, onChallenge, onGrill, judgeOn, canCheck, judgeView, judgeError, onCheck }: Props) {
-  const value = (id: string) => getField(canvas, step.id, id);
-  const fields = step.fields;
+// ---------------------------------------------------------------------------
+// The boxes
+// ---------------------------------------------------------------------------
 
-  const renderField = (id: string, className?: string) => {
-    const field = fields.find((f) => f.id === id);
-    if (!field) return null;
-    return <FieldInput key={id} stepId={step.id} field={field} value={value(id)} onChange={(v) => onField(id, v)} className={className} />;
-  };
+type Props = {
+  step: StepDef;
+  canvas: Canvas;
+  onField: (fieldId: string, value: string) => void;
+  /** A coach request is running (any step). */
+  busy: boolean;
+  /** Pal is drafting the problem statement. */
+  drafting: boolean;
+  onDraft: () => void;
+  /** Pal is suggesting assumptions. */
+  suggesting: boolean;
+  suggestions: string[];
+  onSuggest: () => void;
+  onPickSuggestion: (text: string) => void;
+  /** What sits under the boxes: the check button and card, or the brief tools. */
+  children: ReactNode;
+};
 
-  const hint = judgeOn && !canCheck ? 'Fill in every box above to check your step' : !canChallenge ? 'Write a few words first' : '';
+export function StepView({ step, canvas, onField, busy, drafting, onDraft, suggesting, suggestions, onSuggest, onPickSuggestion, children }: Props) {
+  const [revealed, setRevealed] = useState(0);
+  const [triedDraft, setTriedDraft] = useState(false);
+  const fields = visibleFields(canvas, step, revealed);
+  const next = revealNext(canvas, step, revealed);
 
-  let body;
-  if (step.id === 'problem') {
-    body = (
-      <>
-        <div className="fourcs">{FOUR_CS.map((id, i) => renderField(id, `card card--c${i + 1}`))}</div>
-        {renderField('statement')}
-      </>
-    );
-  } else if (step.id === 'why') {
-    body = (
-      <>
-        <ol className="chain">
-          {fields
-            .filter((f) => f.id.startsWith('whys.'))
-            .map((f) => (
-              <li key={f.id}>{renderField(f.id)}</li>
-            ))}
-        </ol>
-        {step.hint && <p className="inline-hint">{step.hint}</p>}
-        {renderField('statement')}
-      </>
-    );
-  } else {
-    body = fields.map((f) => renderField(f.id));
+  function showMore() {
+    if (!next) return;
+    setRevealed(next.revealed);
+    // Once the new box is on screen, put the cursor in it.
+    window.setTimeout(() => document.getElementById(`f-${step.id}-${next.fieldId.replace('.', '-')}`)?.focus(), 0);
   }
+
+  const draftMessage = triedDraft ? statementMissingMessage(canvas) : '';
+
+  const extras = (id: string): { action?: ReactNode; below?: ReactNode; readOnly?: boolean } => {
+    if (step.id === 'why' && id === 'statement') {
+      return {
+        readOnly: drafting,
+        action: (
+          <button type="button" className="btn btn--small" onClick={() => (statementMissingMessage(canvas) ? setTriedDraft(true) : onDraft())} disabled={busy && !drafting} aria-busy={drafting || undefined}>
+            {drafting ? 'Drafting…' : 'Draft it for me'}
+          </button>
+        ),
+        below: draftMessage ? (
+          <p className="field__help" role="status">
+            {draftMessage}
+          </p>
+        ) : undefined,
+      };
+    }
+    if (step.id === 'bet' && id === 'assumption') {
+      return {
+        below: (
+          <div className="suggest">
+            <div>
+              <button type="button" className="btn btn--small" onClick={onSuggest} disabled={busy && !suggesting} aria-busy={suggesting || undefined}>
+                {suggesting ? 'Thinking…' : 'Suggest three'}
+              </button>
+            </div>
+            {suggestions.length > 0 && (
+              <>
+                <ul className="suggest__list">
+                  {suggestions.map((text, i) => (
+                    <li key={i}>
+                      <button type="button" className="suggest__card" onClick={() => onPickSuggestion(text)} disabled={suggesting}>
+                        {text}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="field__help">Pick the one that worries you most, or write your own.</p>
+              </>
+            )}
+          </div>
+        ),
+      };
+    }
+    return {};
+  };
 
   return (
     <section aria-labelledby="step-title" className="step-fields">
-      {body}
-
-      {step.callout && (
-        <aside className="callout">
-          <p className="callout__title">{step.callout.title}</p>
-          <p>{step.callout.body}</p>
-        </aside>
+      {step.id === 'why' ? (
+        <>
+          <ol className="chain">
+            {fields
+              .filter((f) => f.id.startsWith('whys.'))
+              .map((f) => (
+                <li key={f.id}>
+                  <FieldInput stepId={step.id} canvas={canvas} field={f} value={getField(canvas, step.id, f.id)} onChange={(v) => onField(f.id, v)} />
+                </li>
+              ))}
+          </ol>
+          {next && (
+            <p className="more">
+              <button type="button" className="link" onClick={showMore}>
+                {step.moreLabel}
+              </button>
+            </p>
+          )}
+          {fields
+            .filter((f) => !f.id.startsWith('whys.'))
+            .map((f) => (
+              <FieldInput key={f.id} stepId={step.id} canvas={canvas} field={f} value={getField(canvas, step.id, f.id)} onChange={(v) => onField(f.id, v)} {...extras(f.id)} />
+            ))}
+        </>
+      ) : (
+        <>
+          {fields.map((f) => (
+            <FieldInput key={f.id} stepId={step.id} canvas={canvas} field={f} value={getField(canvas, step.id, f.id)} onChange={(v) => onField(f.id, v)} {...extras(f.id)} />
+          ))}
+          {next && (
+            <p className="more">
+              <button type="button" className="link" onClick={showMore}>
+                {step.moreLabel}
+              </button>
+            </p>
+          )}
+        </>
       )}
 
-      <Hints step={step} />
+      <StepHelp step={step} />
 
+      {children}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The check button, the "Ask me questions" link and the result card
+// ---------------------------------------------------------------------------
+
+type CheckProps = {
+  stepId: CoachStepId;
+  /** The step has passed, so Next is now the main action. */
+  passed: boolean;
+  /** The AI step checker is on for this session. */
+  judgeOn: boolean;
+  view: JudgeView;
+  error: string;
+  /** Inline message naming the boxes that still need an answer. */
+  emptyMessage: string;
+  nudge?: NudgeView;
+  busy: boolean;
+  onCheck: () => void;
+  onQuestions: () => void;
+};
+
+export function CheckBar({ stepId, passed, judgeOn, view, error, emptyMessage, nudge, busy, onCheck, onQuestions }: CheckProps) {
+  const checking = view.kind === 'checking';
+  return (
+    <>
       <div className="actions">
         {judgeOn && (
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={onCheck}
-            disabled={!canCheck || judgeView.kind === 'checking'}
-            aria-describedby={canCheck ? undefined : 'step-hint'}
-          >
-            {judgeView.kind === 'checking' ? 'Checking…' : 'Check my step'}
+          <button type="button" className={passed ? 'btn btn--quiet' : 'btn btn--primary'} onClick={() => !checking && onCheck()} aria-busy={checking || undefined}>
+            {checking ? 'Checking…' : passed ? 'Check again' : 'Check my step'}
           </button>
         )}
-        <button
-          type="button"
-          className={judgeOn ? 'btn' : 'btn btn--primary'}
-          onClick={onChallenge}
-          disabled={!canChallenge || busy}
-          title={canChallenge ? undefined : 'Write a few words first'}
-          aria-describedby={hint && !canChallenge ? 'step-hint' : undefined}
-        >
-          Challenge this
+        <button type="button" className="link link--quiet" onClick={onQuestions} disabled={busy} title={busy ? 'Your coach is busy. Try again in a moment.' : undefined}>
+          Ask me questions
         </button>
-        <button type="button" className="btn" onClick={onGrill} disabled={busy}>
-          Grill me
-        </button>
-        {hint && (
-          <span id="step-hint" className="actions__hint">
-            {hint}
-          </span>
-        )}
+        {busy && <span className="field__help">Your coach is busy. Try again in a moment.</span>}
       </div>
-
-      {judgeOn && <JudgeCard view={judgeView} error={judgeError} onCheck={onCheck} stepId={step.id as CoachStepId} />}
-    </section>
+      {emptyMessage && (
+        <p className="notice" role="status">
+          {emptyMessage}
+        </p>
+      )}
+      {judgeOn && <JudgeCard view={view} error={error} onCheck={onCheck} stepId={stepId} nudge={nudge} />}
+    </>
   );
 }

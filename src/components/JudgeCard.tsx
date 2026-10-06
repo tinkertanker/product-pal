@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import type { CoachStepId } from '../shared/canvas';
-import { judgeHeadline, type JudgeView } from '../shared/judgeFlow';
+import { judgeCard, type JudgeView } from '../shared/judgeFlow';
+import { Markdown } from './Markdown';
 import { Sticker } from './Sticker';
+
+export type NudgeView = { text: string; /** The reply is still arriving. */ pending: boolean };
 
 type Props = {
   view: JudgeView;
@@ -8,29 +12,41 @@ type Props = {
   error: string;
   onCheck: () => void;
   stepId: CoachStepId;
+  /** The coach's follow-up to a miss, shown under the card. */
+  nudge?: NudgeView;
 };
 
+function Dots() {
+  return (
+    <span className="dots" aria-hidden="true">
+      <i />
+      <i />
+      <i />
+    </span>
+  );
+}
+
 /** The step checker's answer, shown under the step's buttons. */
-export function JudgeCard({ view, error, onCheck, stepId }: Props) {
+export function JudgeCard({ view, error, onCheck, stepId, nudge }: Props) {
   const titleId = `judge-title-${stepId}`;
+  const [showChecks, setShowChecks] = useState(false);
 
   if (view.kind === 'checking') {
     return (
       <div className="judge" role="status">
         <p className="judge__thinking">
-          <span className="dots" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
+          <Dots />
           Checking your step…
         </p>
       </div>
     );
   }
 
+  const card = view.kind === 'result' ? judgeCard(view.judgement) : null;
+  if (view.kind === 'none' && !error) return null;
+
   return (
-    <div className="judge-wrap" aria-live="polite">
+    <div className="judge-wrap" aria-live="polite" aria-busy={nudge?.pending ? true : undefined}>
       {error && (
         <p className="error" role="alert">
           {error}
@@ -38,32 +54,59 @@ export function JudgeCard({ view, error, onCheck, stepId }: Props) {
       )}
       {view.kind === 'stale' && (
         <div className="judge judge--stale">
-          <p className="judge__headline">You've changed this step since it was checked.</p>
+          <p className="judge__headline">You've changed this since it was checked.</p>
           <button type="button" className="btn btn--small" onClick={onCheck}>
-            Check it again
+            Check again
           </button>
         </div>
       )}
-      {view.kind === 'result' && (
-        <section className={`judge ${view.judgement.pass ? 'judge--pass' : 'judge--almost'}`} aria-labelledby={titleId}>
+      {view.kind === 'result' && card && (
+        <section className={`judge ${card.tone === 'fail' ? 'judge--almost' : card.tone === 'miss' ? 'judge--miss' : 'judge--pass'}`} aria-labelledby={titleId}>
           <div className="judge__top">
             <p id={titleId} className="judge__headline">
-              {judgeHeadline(view.judgement)}
+              {card.headline}
             </p>
-            {view.judgement.pass && <Sticker name="yay" size={44} className="sticker--judge" />}
+            {card.tone === 'pass' && <Sticker name="yay" size={44} className="sticker--judge" />}
           </div>
-          <ul className="judge__checks">
-            {view.judgement.checks.map((check) => (
-              <li key={check.id} className={check.pass ? 'is-pass' : 'is-fail'}>
-                <span className="checklist__mark" aria-hidden="true">
-                  {check.pass ? '✓' : '○'}
-                </span>
-                {check.label}
-                <span className="sr-only">{check.pass ? ' (ticked)' : ' (not yet)'}</span>
-              </li>
-            ))}
-          </ul>
+          {card.lines.length > 0 && (
+            <ul className="judge__fixes">
+              {card.lines.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
+          {card.tone === 'pass' && view.judgement.checks.length > 0 && (
+            <>
+              <button type="button" className="link link--small" onClick={() => setShowChecks((v) => !v)} aria-expanded={showChecks}>
+                {showChecks ? 'Hide checks' : 'Show checks'}
+              </button>
+              {showChecks && (
+                <ul className="judge__checks">
+                  {view.judgement.checks.map((check) => (
+                    <li key={check.id} className="is-pass">
+                      <span className="checklist__mark" aria-hidden="true">
+                        ✓
+                      </span>
+                      {check.label}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </section>
+      )}
+      {view.kind === 'result' && card && card.tone !== 'pass' && nudge && (nudge.text || nudge.pending) && (
+        <div className="nudge">
+          <p className="nudge__title">Your coach says</p>
+          {nudge.text ? (
+            <Markdown>{nudge.text}</Markdown>
+          ) : (
+            <p className="thinking">
+              <Dots />
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

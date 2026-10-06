@@ -2,18 +2,22 @@
 // step, how the answers turn into a pass or fail, and what the request looks
 // like. Pure: the Worker does the fetch.
 
-import { COACH_STEP_IDS, getField, type Canvas, type CoachStepId } from './canvas';
+import { COACH_STEP_IDS, getField, judgedFields, type Canvas, type CoachStepId, type StepId } from './canvas';
 import type { JudgeCheck, Judgement } from './contracts';
-import { getMainField, getStep } from './steps';
+import { getStep } from './steps';
 
 export type JudgeCheckDef = {
   id: string;
   /** What participants see next to the tick or cross. Warm, short, positive. */
   label: string;
+  /** One short line shown when the check is missed: what to do about it. */
+  fix: string;
   /** The yes/no question for Jev. Backtick paths point into `state`. */
   instructions: string;
   /** Must pass whatever else happens (the one-miss allowance does not cover it). */
   required: boolean;
+  /** Probability needed to pass, when this check needs a different bar from CHECK_PASS. */
+  passAt?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -24,145 +28,141 @@ export type JudgeCheckDef = {
 export const CHECK_PASS = 0.5;
 /** The `genuine` check has to clear a higher bar, so placeholder text cannot slip through. */
 export const GENUINE_PASS = 0.6;
-/** Steps with more than this many checks (besides `genuine`) may miss one of the non-required ones. */
+/**
+ * The why chain is required, and its question is strict (each answer must follow
+ * from the one before and add a new cause). Jev's scores for that question run
+ * lower than for the others: sound chains scored 0.40 to 0.48, while chains that
+ * restate themselves or jump sideways scored 0.06 to 0.19. 0.3 sits in the gap.
+ */
+export const GOES_DEEPER_PASS = 0.3;
+/** Steps with at least this many checks (besides `genuine`) may miss one of the non-required ones. */
 export const ALLOWED_MISS_MIN_CHECKS = 4;
 
 export const GENUINE_CHECK: JudgeCheckDef = {
   id: 'genuine',
   label: 'Reads as a real attempt',
+  fix: 'Write a real attempt, even a rough one.',
   instructions:
     "Is `fields` a genuine attempt at this step, rather than placeholder or joke text such as 'idk', 'test', 'asdf' or 'whatever'?",
   required: true,
+  passAt: GENUINE_PASS,
 };
 
-const check = (id: string, label: string, instructions: string, required = false): JudgeCheckDef => ({
+const check = (id: string, label: string, fix: string, instructions: string, required = false, passAt?: number): JudgeCheckDef => ({
   id,
   label,
+  fix,
   instructions,
   required,
+  ...(passAt === undefined ? {} : { passAt }),
 });
 
 /** The checks for each step, without `genuine` (which every step gets). */
 export const STEP_CHECKS: Record<CoachStepId, JudgeCheckDef[]> = {
-  idea: [
+  who: [
     check(
       'specific_user',
-      'Names a specific person or role',
-      'Does `fields.who` name a specific person or role (for example "new nurses on night shift"), rather than a vague group such as "everyone", "users" or "the business"?',
+      'Names one person or role',
+      'Name one person or role, such as "night-shift nurses".',
+      'Does `fields.who` name one specific person or role (for example "new nurses on night shift"), rather than a vague group such as "everyone", "users" or "the business"?',
+      true,
     ),
     check(
       'real_pain',
-      'Describes a real difficulty they have today',
-      'Does `fields.pain` describe a concrete difficulty that this person faces today, rather than a general wish or a missing feature?',
+      'Describes a moment that is hard today',
+      'Describe one moment where it goes wrong for them today.',
+      'Does `fields.pain` describe a concrete moment or situation that is hard for this person today, rather than a general wish or a missing feature?',
     ),
     check(
-      'job_not_tech',
-      'Says what the idea does without naming a technology',
-      'Does `fields.oneLine` describe the job to be done without naming a technology such as AI, an app, a chatbot, an agent or a dashboard?',
+      'problem_not_solution',
+      'Describes the difficulty without naming a fix',
+      'Describe what is hard. Move any app, AI or feature to the parked idea box.',
+      'Do `fields.who` and `fields.pain` describe the difficulty without proposing a solution or naming a technology such as an app, AI, a chatbot, a dashboard or a feature? Answer yes only if they describe the problem alone.',
       true,
+    ),
+    check(
+      'honest_evidence',
+      'Says how you know, or how you\'d find out',
+      'Add something you saw, heard or counted, or say how you\'d check.',
+      'Does `fields.evidence` either give something the participant saw, heard or counted, or honestly say that they have not checked yet and how they would find out (for example "I haven\'t checked yet; I\'d ask three nurses")? Answer no for filler such as "NA" or "idk", and for a bare claim with no source or way to check it.',
     ),
   ],
   why: [
     check(
       'goes_deeper',
-      'Each why goes deeper than the one before',
-      'Taken together, do the answers in `fields.whys` dig steadily deeper towards a root cause, rather than going round in circles or sideways?',
+      'Each why digs into a cause',
+      'Make each answer explain the one before it, not restate it.',
+      'The first answer in `fields.whys` gives a reason for the difficulty in `earlier.who`, and each later answer gives a reason for the one before it. Short answers are fine. Does every answer follow from the one before it and add a new, deeper cause? Answer no if any answer repeats or rewords the one before it, or does not follow from it.',
+      true,
+      GOES_DEEPER_PASS,
     ),
     check(
       'actionable',
-      'Reaches a cause someone could act on',
+      'Ends at something a team could change',
+      'Keep going until you reach something your team could change.',
       'Does the chain of answers in `fields.whys` end at a cause that a person or team could realistically do something about?',
-    ),
-    check(
-      'why_without_ai',
-      'Still makes sense with the word AI removed',
-      'If the word "AI" (and words like chatbot or agent) were removed from `fields.statement`, would the sentence still make sense as a reason to act?',
-      true,
-    ),
-  ],
-  problem: [
-    check(
-      'names_user',
-      'Names who is affected',
-      'Does the problem statement in `fields.statement` (with `fields.clarity`) name who is affected?',
-    ),
-    check(
-      'no_solution',
-      'Leaves out any solution or technology',
-      'Is `fields.statement` free of any proposed solution or technology (such as an app, a tool, a chatbot or AI)? Answer yes only if it describes the problem alone.',
-      true,
     ),
     check(
       'has_consequence',
       'Says what happens if nothing changes',
-      'Does `fields.consequence` say what actually happens if nobody fixes the problem?',
+      'Say what it costs them if nothing changes.',
+      'Does `fields.consequence` say what actually happens, or what it costs the person, if nobody fixes the problem?',
     ),
     check(
-      'has_cause',
-      'Explains why the problem exists',
-      'Does `fields.cause` explain why the problem exists?',
-    ),
-    check(
-      'has_evidence',
-      'Gives real evidence that the problem is real',
-      'Does `fields.confirmation` give real evidence that the problem exists, such as a number, something the participant observed or a quote from someone affected?',
+      'statement_no_solution',
+      'The problem statement stops before any solution',
+      'Take the app, tool or AI out of the problem statement.',
+      'Is `fields.statement` free of any proposed solution or technology (such as an app, a tool, a chatbot or AI)? Answer yes only if it describes the problem alone.',
+      true,
     ),
   ],
-  metric: [
+  success: [
     check(
       'outcome_not_activity',
-      "Measures a change in the user's outcome",
-      "Does `fields.primary` measure a change in the user's outcome (such as time taken, errors made or results achieved), rather than usage such as logins, prompts sent, reports generated or page views?",
+      'Measures a change in their day',
+      'Pick a change in their day, such as minutes saved. Logins and usage don\'t count.',
+      "Does `fields.metric` measure a change in the user's day or outcome (such as time taken, errors made or results achieved), rather than usage such as logins, prompts sent, reports generated or page views?",
       true,
     ),
     check(
       'has_baseline',
-      'Says what the number is today',
-      'Does `fields.baseline` give a current value for the metric, or say how the participant would find it out?',
-    ),
-    check(
-      'target_with_time',
-      'Sets a target with a timeframe',
-      'Does `fields.target` give a target for the metric together with a timeframe?',
-    ),
-    check(
-      'has_guardrail',
-      'Names something that must not get worse',
-      'Does `fields.guardrail` name something specific that must not get worse while the metric improves?',
+      'Gives today\'s value or how to find it',
+      'Give a rough number for today, or say how you\'d find it.',
+      'Does `fields.today` give a rough current value for the metric, or say how the participant would find it out?',
     ),
   ],
-  assumption: [
+  bet: [
     check(
       'would_sink_it',
-      'Picks an assumption that would sink the idea if wrong',
-      'Is `fields.riskiest` an assumption that would sink the whole idea if it turned out to be false (for example that people want this at all), rather than a minor detail?',
+      'The assumption would sink the idea if wrong',
+      'Pick the belief that, if wrong, means nobody uses this.',
+      'Is `fields.assumption` a basic belief that would sink the whole idea if it turned out to be false (for example that people want this, trust it or would change what they do), rather than a detail of design, wording or looks?',
     ),
     check(
       'cheap_test',
-      'Has a test you could run in the next 30 minutes without code',
+      'The test fits in 30 minutes without code',
+      'Choose a test you could run in the room in 30 minutes, without code.',
       'Could the test in `fields.test` be run in the next 30 minutes without writing any code, for example by asking a few people, trying it by hand or sketching it on paper?',
     ),
     check(
       'pass_mark',
-      'Sets a clear pass mark up front',
-      'Is `fields.threshold` a specific, measurable result that was decided before the test?',
+      'The pass mark is a number decided up front',
+      'Give a number that counts as a pass, such as "2 of 3".',
+      'Is `fields.passMark` a specific, measurable result that was decided before the test?',
     ),
   ],
-  experience: [
-    check(
-      'existing_tools',
-      'Fits into tools the user already uses',
-      'Does `fields.where` place this inside tools or places the user already uses, rather than asking them to visit something new?',
-    ),
+  brief: [
     check(
       'concrete_steps',
-      'Tells the first two minutes step by step',
-      "Does `fields.firstTwoMinutes` tell the first two minutes step by step from the user's side, with concrete actions and what they see?",
+      'Walks through what the user does and sees',
+      'List what the user does and sees, one step at a time.',
+      "Does `fields.firstTwoMinutes` walk through the first two minutes step by step from the user's side, with concrete actions and what they see?",
     ),
     check(
       'unhappy_path',
-      'Says what happens when something goes wrong',
-      'Does `fields.unhappyPath` say what the user sees and does when something goes wrong?',
+      'Says what the user sees when it goes wrong',
+      'Say what the user sees, and what they do next.',
+      'Does `fields.unhappyPath` say what the user sees when something goes wrong? Naming what they do next is welcome but not needed. Answer no if it is empty, says nothing goes wrong, or only promises that errors will be handled.',
     ),
   ],
 };
@@ -192,25 +192,50 @@ export type JudgeQuestions = Record<string, { type: 'noul'; instructions: string
 
 export type JudgeRequestBody = { state: JudgeState; questions: JudgeQuestions };
 
-/** The step's fields as the judge sees them. The five whys go in as one list (blanks dropped). */
+/**
+ * The step's fields as the judge sees them: the boxes that are shown and
+ * judged (never the parked idea). The whys go in as one list, blanks dropped.
+ */
 function fieldsFor(canvas: Canvas, step: CoachStepId): Record<string, string | string[]> {
   const fields: Record<string, string | string[]> = {};
-  if (step === 'why') {
-    fields.whys = canvas.why.whys.map((w) => w.trim()).filter((w) => w.length > 0);
-    fields.statement = canvas.why.statement.trim();
-    return fields;
+  for (const f of judgedFields(canvas, step)) {
+    if (f.id.startsWith('whys.')) continue;
+    fields[f.id] = getField(canvas, step, f.id).trim();
   }
-  for (const f of getStep(step).fields) fields[f.id] = getField(canvas, step, f.id).trim();
+  if (step === 'why') {
+    // Put the list first so the order reads whys, consequence, statement.
+    const whys = canvas.why.whys.map((w) => w.trim()).filter((w) => w.length > 0);
+    return { whys, ...fields };
+  }
   return fields;
 }
 
-/** A line or two from each earlier step's main field, so the judge knows the story so far. */
+/** The main answer of each step, as one line the judge can read as "the story so far". */
+function mainAnswer(canvas: Canvas, id: StepId): string {
+  const text = (field: string) => getField(canvas, id, field).trim().replace(/\s+/g, ' ');
+  switch (id) {
+    case 'who': {
+      const who = text('who');
+      const pain = text('pain');
+      return who && pain ? `${who}. ${pain}` : who || pain;
+    }
+    case 'why':
+      return text('statement');
+    case 'success':
+      return text('metric');
+    case 'bet':
+      return text('assumption');
+    default:
+      return '';
+  }
+}
+
+/** A line or two from each earlier step's main answer, so the judge knows the story so far. */
 function earlierFor(canvas: Canvas, step: CoachStepId): Record<string, string> {
   const earlier: Record<string, string> = {};
   for (const id of COACH_STEP_IDS) {
     if (id === step) break;
-    const main = getMainField(id);
-    const text = main ? getField(canvas, id, main.id).trim().replace(/\s+/g, ' ') : '';
+    const text = mainAnswer(canvas, id);
     if (text) earlier[id] = text.slice(0, EARLIER_CHARS);
   }
   return earlier;
@@ -252,7 +277,7 @@ export function parseJevAnswers(data: unknown): Record<string, number> | null {
 }
 
 function threshold(def: JudgeCheckDef): number {
-  return def.id === GENUINE_CHECK.id ? GENUINE_PASS : CHECK_PASS;
+  return def.passAt ?? CHECK_PASS;
 }
 
 /**
@@ -269,7 +294,7 @@ export function interpretJudge(
   const defs = checksFor(step);
   const checks: JudgeCheck[] = defs.map((def) => {
     const probability = answers[def.id] ?? 0;
-    return { id: def.id, label: def.label, probability, pass: probability >= threshold(def) };
+    return { id: def.id, label: def.label, probability, pass: probability >= threshold(def), fix: def.fix };
   });
 
   const others = defs.filter((d) => d.id !== GENUINE_CHECK.id);

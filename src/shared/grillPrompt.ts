@@ -16,8 +16,4 @@ Format each question like this:
 Each round of answers opens new questions. Keep going until every branch is covered and nothing is silently assumed. Don't act on the plan until I confirm we're aligned.
 
 My plan:
-<paste your canvas or build prompt here>`;
-
-/** The line a build prompt opens with when the participant wants to be grilled first. */
-export const GRILL_OPENER =
-  "Before you write any code, grill me. Interview me in rounds of up to three numbered questions, each with your recommended answer, until we share an understanding of what to build. Don't start building until I confirm.";
+<paste your brief here>`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clarificationsFrom, fingerprint, nicknameFor } from './contracts';
+import { COACH_MODES, CLARIFICATIONS_PER_STEP, clarificationsFrom, fingerprint, nicknameFor } from './contracts';
 
 describe('fingerprint', () => {
   it('is stable and changes with the text', () => {
@@ -16,24 +16,30 @@ describe('nicknameFor', () => {
   });
 });
 
+describe('COACH_MODES', () => {
+  it('are the six modes of the new flow', () => {
+    expect([...COACH_MODES]).toEqual(['nudge', 'questions', 'statement', 'assumptions', 'brief', 'review']);
+  });
+});
+
 describe('clarificationsFrom', () => {
   it('drops the automatic opener and the coach turns', () => {
     const out = clarificationsFrom({
       why: [
-        { role: 'user', content: 'Grill me on my why.' },
+        { role: 'user', content: 'Ask me questions about my why.' },
         { role: 'assistant', content: 'Q1 …' },
         { role: 'user', content: "It's not about being new." },
       ],
-      idea: [{ role: 'user', content: 'Grill me on my idea.' }],
+      who: [{ role: 'user', content: 'Ask me questions about my person and their pain.' }],
     });
     expect(out).toEqual({ why: ["It's not about being new."] });
   });
 
   it('keeps only the latest ten answers, each clamped', () => {
     const chat = [{ role: 'user' as const, content: 'opener' }, ...Array.from({ length: 12 }, (_, i) => ({ role: 'user' as const, content: `a${i}`.padEnd(5000, 'x') }))];
-    const out = clarificationsFrom({ problem: chat });
-    expect(out.problem).toHaveLength(10);
-    expect(out.problem?.[0]?.startsWith('a2')).toBe(true);
-    expect(out.problem?.[0]?.length).toBe(4000);
+    const out = clarificationsFrom({ bet: chat });
+    expect(out.bet).toHaveLength(CLARIFICATIONS_PER_STEP);
+    expect(out.bet?.[0]?.startsWith('a2')).toBe(true);
+    expect(out.bet?.[0]?.length).toBe(4000);
   });
 });

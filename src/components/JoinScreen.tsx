@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { joinWorkshop } from '../api';
-import { approxDuration, totalMinutes } from '../shared/steps';
+import { approxDuration } from '../shared/steps';
 import { Sticker } from './Sticker';
 
 type Props = { notice?: string; showTimings: boolean; onJoined: (code: string) => void };
@@ -36,9 +36,8 @@ export function JoinScreen({ notice, showTimings, onJoined }: Props) {
           <Sticker name="greetings" size={132} eager className="sticker--join" />
         </div>
         <p className="join__sub">
-          {showTimings
-            ? `Let's take one idea and think it through properly. It takes ${approxDuration(totalMinutes())}.`
-            : "Let's take one idea and think it through properly, one step at a time."}
+          Take one idea, think it through, and leave with a brief you can build from.
+          {showTimings ? ` It takes ${approxDuration()}.` : ''}
         </p>
 
         {notice && (
@@ -77,9 +76,7 @@ export function JoinScreen({ notice, showTimings, onJoined }: Props) {
           )}
         </form>
 
-        <p className="join__safe">
-          Your facilitator can see what you write here, so they can help you along. Please use made-up or anonymised details, and keep anything confidential out of here.
-        </p>
+        <p className="join__safe">Your facilitator can see what you write. Please use made-up details and keep anything confidential out.</p>
       </div>
     </main>
   );

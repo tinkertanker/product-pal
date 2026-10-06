@@ -1,10 +1,11 @@
 // Talking to our own server. Nothing here knows about prompts.
 
 import { readCoachStream } from './shared/coachStream';
-import type { CoachMode } from './shared/validation';
-import { normaliseCanvas, type Canvas, type ChatMessage, type CoachStepId } from './shared/canvas';
+import { parseRetryAfter } from './shared/syncPolicy';
+import { normaliseCanvas, normaliseDone, type Canvas, type ChatMessage, type CoachStepId } from './shared/canvas';
 import type {
   Clarifications,
+  CoachMode,
   JudgeRequest,
   Judgement,
   ParticipantDetail,
@@ -21,8 +22,11 @@ export type CoachBody = {
   mode: CoachMode;
   step?: CoachStepId;
   canvas: Canvas;
+  /** The question chat so far (`questions` mode). */
   messages?: ChatMessage[];
-  /** The participant's own grill answers, for build and tune. */
+  /** Ids of the checks that were missed (`nudge` mode, 1 to 6). */
+  failed?: string[];
+  /** The participant's own answers in the question chats (`statement`, `assumptions`, `brief` and `review`). */
   clarifications?: Clarifications;
 };
 
@@ -52,6 +56,10 @@ export async function joinWorkshop(code: string): Promise<{ ok: true } | { ok: f
 
 const COACH_STOPPED = 'Your coach stopped partway through. Please try again in a moment.';
 
+/** How long to wait for the first bytes (the model thinks before it answers), then between chunks. */
+export const COACH_FIRST_BYTE_MS = 100_000;
+export const COACH_IDLE_MS = 60_000;
+
 export type CoachResult = {
   text: string;
   /** The reply hit the length limit, so its end is missing. */
@@ -61,49 +69,84 @@ export type CoachResult = {
 /**
  * Stream a coach reply. `onText` receives the whole reply so far each time
  * more arrives. Resolves with the final text, or throws if the reply failed,
- * including partway through. Error text is never part of the reply.
+ * including partway through or if nothing arrives for a minute. Error text is
+ * never part of the reply.
  */
 export async function streamCoach(body: CoachBody, onText: (textSoFar: string) => void, signal: AbortSignal): Promise<CoachResult> {
-  let response: Response;
-  try {
-    response = await fetch('/api/coach', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (error) {
-    if (signal.aborted) throw error;
-    throw new Error("We can't reach the server just now. Please check your connection and try again.");
-  }
-  if (response.status === 401) throw new UnauthorisedError();
-  if (!response.ok || !response.body) throw new Error(await errorFrom(response, "Your coach couldn't answer just now. Please try again in a moment."));
+  const inner = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const relay = () => {
+    inner.abort();
+    reader?.cancel().catch(() => undefined);
+  };
+  if (signal.aborted) inner.abort();
+  else signal.addEventListener('abort', relay, { once: true });
+  const arm = (ms: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      inner.abort();
+      reader?.cancel().catch(() => undefined);
+    }, ms);
+  };
+  const stopped = () => new Error(COACH_STOPPED);
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let raw = '';
-  let text = '';
-  for (;;) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
+  try {
+    arm(COACH_FIRST_BYTE_MS);
+    let response: Response;
     try {
-      chunk = await reader.read();
+      response = await fetch('/api/coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: inner.signal,
+      });
     } catch (error) {
       if (signal.aborted) throw error;
-      throw new Error(COACH_STOPPED);
+      if (timedOut) throw stopped();
+      throw new Error("We can't reach the server just now. Please check your connection and try again.");
     }
-    if (chunk.done) break;
-    raw += decoder.decode(chunk.value, { stream: true });
-    const next = readCoachStream(raw).text;
-    if (next !== text) {
-      text = next;
-      onText(text);
+    if (signal.aborted) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new DOMException('Aborted', 'AbortError');
     }
+    if (response.status === 401) throw new UnauthorisedError();
+    if (!response.ok || !response.body) throw new Error(await errorFrom(response, "Your coach couldn't answer just now. Please try again in a moment."));
+
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let raw = '';
+    let text = '';
+    for (;;) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw stopped();
+      }
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (timedOut) throw stopped();
+      if (chunk.done) break;
+      arm(COACH_IDLE_MS);
+      raw += decoder.decode(chunk.value, { stream: true });
+      const next = readCoachStream(raw).text;
+      if (next !== text) {
+        text = next;
+        onText(text);
+      }
+    }
+    raw += decoder.decode();
+    const { text: final, end } = readCoachStream(raw);
+    if (end !== 'ok' && end !== 'truncated') throw stopped();
+    if (final !== text) onText(final);
+    return { text: final, truncated: end === 'truncated' };
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', relay);
   }
-  raw += decoder.decode();
-  const { text: final, end } = readCoachStream(raw);
-  if (end !== 'ok' && end !== 'truncated') throw new Error(COACH_STOPPED);
-  if (final !== text) onText(final);
-  return { text: final, truncated: end === 'truncated' };
 }
 
 // ---------------------------------------------------------------------------
@@ -171,12 +214,36 @@ export async function requestJudgement(body: JudgeRequest): Promise<Judgement> {
 // Progress sync (quiet: failures are logged and forgotten)
 // ---------------------------------------------------------------------------
 
-export async function postSync(json: string): Promise<void> {
+/** What became of a sync: saved, worth another try later, or refused for good. */
+export type SyncOutcome = 'saved' | 'retry' | 'refused';
+
+/** A sync that failed for a passing reason (the network, the server, a rate limit) is worth retrying. */
+export function syncOutcome(status: number): SyncOutcome {
+  if (status >= 200 && status < 300) return 'saved';
+  return status === 429 || status >= 500 ? 'retry' : 'refused';
+}
+
+export type SyncResult = { outcome: SyncOutcome; /** From a Retry-After header on a 429 or 503. */ retryAfterSeconds?: number };
+
+/** A sync that has not answered by now is treated as a failure worth retrying. */
+const SYNC_TIMEOUT_MS = 8000;
+
+export async function postSync(json: string): Promise<SyncResult> {
   try {
-    const response = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json, keepalive: json.length < 60_000 });
-    if (!response.ok) console.warn(`Progress sync was refused (${response.status}).`);
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: json,
+      keepalive: json.length < 60_000,
+      signal: AbortSignal.timeout(SYNC_TIMEOUT_MS),
+    });
+    const outcome = syncOutcome(response.status);
+    if (outcome !== 'saved') console.warn(`Progress sync was refused (${response.status}).`);
+    const retryAfterSeconds = response.status === 429 || response.status === 503 ? parseRetryAfter(response.headers.get('Retry-After')) : undefined;
+    return { outcome, ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) };
   } catch (error) {
     console.warn('Progress sync failed.', error);
+    return { outcome: 'retry' };
   }
 }
 
@@ -215,9 +282,9 @@ async function adminCall<T>(password: string, path: string, init: { method?: str
 }
 
 export const adminParticipants = (password: string) =>
-  adminCall<{ participants: ParticipantSummary[] }>(password, '/api/admin/participants').then((r) => r.participants);
+  adminCall<{ participants: ParticipantSummary[] }>(password, '/api/admin/participants').then((r) => r.participants.map((p) => ({ ...p, done: normaliseDone(p.done) })));
 export const adminParticipant = (password: string, clientId: string) =>
-  adminCall<ParticipantDetail>(password, `/api/admin/participants/${encodeURIComponent(clientId)}`).then((d) => ({ ...d, canvas: normaliseCanvas(d.canvas) }));
+  adminCall<ParticipantDetail>(password, `/api/admin/participants/${encodeURIComponent(clientId)}`).then((d) => ({ participant: { ...d.participant, done: normaliseDone(d.participant.done) }, canvas: normaliseCanvas(d.canvas) }));
 export const adminSettings = (password: string) => adminCall<Settings>(password, '/api/admin/settings');
 export const adminSaveSettings = (password: string, patch: Partial<Settings>) =>
   adminCall<Settings>(password, '/api/admin/settings', { method: 'PUT', body: patch });

@@ -18,13 +18,11 @@ export type StickerName =
 
 /** One sticker per step header. Kept here so the shared step data stays free of UI. */
 export const STEP_STICKER: Record<StepId, StickerName> = {
-  idea: 'handraise',
+  who: 'handraise',
   why: 'sus',
-  problem: 'facepalm',
-  metric: 'ok',
-  assumption: 'shrug',
-  experience: 'happy',
-  build: 'jumping-for-joy',
+  success: 'ok',
+  bet: 'shrug',
+  brief: 'jumping-for-joy',
 };
 
 type Props = {
