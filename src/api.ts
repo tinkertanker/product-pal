@@ -174,12 +174,24 @@ export async function requestJudgement(body: JudgeRequest): Promise<Judgement> {
 // Progress sync (quiet: failures are logged and forgotten)
 // ---------------------------------------------------------------------------
 
-export async function postSync(json: string): Promise<void> {
+/** What became of a sync: saved, worth another try later, or refused for good. */
+export type SyncOutcome = 'saved' | 'retry' | 'refused';
+
+/** A sync that failed for a passing reason (the network, the server, a rate limit) is worth retrying. */
+export function syncOutcome(status: number): SyncOutcome {
+  if (status >= 200 && status < 300) return 'saved';
+  return status === 429 || status >= 500 ? 'retry' : 'refused';
+}
+
+export async function postSync(json: string): Promise<SyncOutcome> {
   try {
     const response = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json, keepalive: json.length < 60_000 });
-    if (!response.ok) console.warn(`Progress sync was refused (${response.status}).`);
+    const outcome = syncOutcome(response.status);
+    if (outcome !== 'saved') console.warn(`Progress sync was refused (${response.status}).`);
+    return outcome;
   } catch (error) {
     console.warn('Progress sync failed.', error);
+    return 'retry';
   }
 }
 

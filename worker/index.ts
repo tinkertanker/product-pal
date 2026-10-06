@@ -167,18 +167,35 @@ async function streamReply(request: CoachRequest, config: Config): Promise<Respo
 
 const judgeAvailable = (env: Env) => (env.TYPESAFE_API_KEY?.trim() ?? '').length > 0;
 
-async function currentSettings(env: Env) {
-  if (!env.DB) return DEFAULT_SETTINGS;
+/** How long a participant's page should wait for the settings before carrying on with what it has. */
+const SETTINGS_TIMEOUT_MS = 1500;
+
+const SETTINGS_UNAVAILABLE = 'Settings are not available just now.';
+
+/**
+ * Settings for every participant. If the database is slow or failing we answer
+ * 503 quickly instead of sending defaults: the browser then keeps the settings
+ * it last saw, so an outage cannot quietly undo a facilitator's choices or
+ * leave the page waiting on a queued query.
+ */
+async function handlePublicSettings(env: Env): Promise<Response> {
+  const headers = { 'Cache-Control': 'no-store' };
+  if (!env.DB) return json(toPublicSettings(DEFAULT_SETTINGS, judgeAvailable(env)), 200, headers);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await readSettings(env.DB);
+    const settings = await Promise.race([
+      readSettings(env.DB),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`no answer after ${SETTINGS_TIMEOUT_MS} ms`)), SETTINGS_TIMEOUT_MS);
+      }),
+    ]);
+    return json(toPublicSettings(settings, judgeAvailable(env)), 200, headers);
   } catch (error) {
     console.error('[settings] read failed:', error instanceof Error ? error.message : error);
-    return DEFAULT_SETTINGS;
+    return json({ error: SETTINGS_UNAVAILABLE }, 503, headers);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-async function handlePublicSettings(env: Env): Promise<Response> {
-  return json(toPublicSettings(await currentSettings(env), judgeAvailable(env)), 200, { 'Cache-Control': 'no-store' });
 }
 
 async function handleJudge(request: Request, env: Env, config: Config, ip: string | null): Promise<Response> {

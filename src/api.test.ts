@@ -90,3 +90,15 @@ describe('requestJudgement', () => {
     await expect(requestJudgement(request)).rejects.toThrow(/couldn't answer/);
   });
 });
+
+describe('syncOutcome', () => {
+  it('retries passing failures and gives up on refusals', async () => {
+    const { syncOutcome } = await import('./api');
+    expect(syncOutcome(204)).toBe('saved');
+    expect(syncOutcome(500)).toBe('retry');
+    expect(syncOutcome(503)).toBe('retry');
+    expect(syncOutcome(429)).toBe('retry');
+    expect(syncOutcome(401)).toBe('refused');
+    expect(syncOutcome(413)).toBe('refused');
+  });
+});

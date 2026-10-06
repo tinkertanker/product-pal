@@ -311,11 +311,28 @@ describe('/api/settings', () => {
     const res = await handle(req('GET', '/api/settings'), env({ DB: db, TYPESAFE_API_KEY: 'k' }));
     expect(await res.json()).toEqual({ showTimings: true, aiJudge: false, judgeAvailable: true });
   });
-  it('falls back to the defaults with no database, or a broken one', async () => {
+  it('falls back to the defaults with no database', async () => {
     expect(await (await handle(req('GET', '/api/settings'), env())).json()).toMatchObject({ showTimings: false, aiJudge: true });
+  });
+  it('answers 503 when the database fails, so the browser keeps the settings it last saw', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const broken = { prepare: () => { throw new Error('boom'); } } as unknown as D1Database;
-    expect((await handle(req('GET', '/api/settings'), env({ DB: broken }))).status).toBe(200);
+    const broken = { prepare: () => { throw new Error('D1 DB is overloaded') } } as unknown as D1Database;
+    const res = await handle(req('GET', '/api/settings'), env({ DB: broken }));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: expect.any(String) });
+  });
+  it('gives up quickly when the database does not answer', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const never = new Promise<never>(() => {});
+      const stuck = { prepare: () => ({ all: () => never, bind: () => ({ all: () => never, first: () => never, run: () => never }) }) } as unknown as D1Database;
+      const pending = handle(req('GET', '/api/settings'), env({ DB: stuck }));
+      await vi.advanceTimersByTimeAsync(1600);
+      expect((await pending).status).toBe(503);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
