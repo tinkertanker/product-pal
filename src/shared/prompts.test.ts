@@ -24,6 +24,23 @@ import type { CoachRequest } from './validation';
 
 const text = (messages: { content: string }[]) => messages.map((m) => m.content).join('\n');
 
+describe('shared Pal context', () => {
+  it('lets chat discuss the current edited brief and fit note, even on an earlier step', () => {
+    const canvas = briefedCanvas();
+    canvas.brief.document = 'Edited brief: test handover with three night nurses.';
+    canvas.brief.fit = 'A summary alone does not test trust.';
+    const output = text(buildQuestionsMessages(canvas, 'who', [{ role: 'user', content: 'Explain my brief.' }]));
+    expect(output).toContain(canvas.brief.document);
+    expect(output).toContain(canvas.brief.fit);
+  });
+
+  it('does not give old conversation unconditional authority over edited boxes', () => {
+    const output = clarificationsToContext({ success: ['Today is 40 minutes.'] });
+    expect(output).not.toContain('override the canvas');
+    expect(output).toContain('current canvas');
+  });
+});
+
 describe('canvasToContext', () => {
   it('wraps the canvas in <canvas> tags', () => {
     const out = canvasToContext(filledCanvas());
@@ -266,13 +283,12 @@ describe('buildMessages / maxTokensFor', () => {
     expect(maxTokensFor('brief')).toBe(16000);
     for (const mode of COACH_MODES.filter((m) => m !== 'brief')) expect(maxTokensFor(mode)).toBe(8000);
   });
-  it('sends clarifications to statement, assumptions, brief and review only', () => {
+  it('sends relevant clarifications to every mode, including chat and nudges', () => {
     const clar = { who: ['It is only ward 4.'] };
     const r = (mode: CoachRequest['mode']): CoachRequest => ({ ...req(mode), clarifications: clar });
-    for (const mode of ['statement', 'assumptions', 'brief', 'review'] as const) {
+    for (const mode of COACH_MODES) {
       expect(text(buildMessages(r(mode)))).toContain('It is only ward 4.');
     }
-    for (const mode of ['nudge', 'questions'] as const) expect(text(buildMessages(r(mode)))).not.toContain('It is only ward 4.');
   });
 });
 
@@ -281,8 +297,8 @@ describe('clarifications', () => {
 
   it('renders a labelled, wrapped block per step, in step order', () => {
     const out = clarificationsToContext({ why: clar.why, who: clar.who });
-    expect(out).toContain('Things the participant clarified when asked questions');
-    expect(out).toContain('override the canvas');
+    expect(out).toContain('Prior conversation, including questions for context');
+    expect(out).toContain('current canvas wins');
     expect(out).toContain('<clarifications>');
     expect(out.endsWith('</clarifications>')).toBe(true);
     expect(out.indexOf('Step 1: Who hurts')).toBeLessThan(out.indexOf('Step 2: Why'));

@@ -23,7 +23,17 @@ describe('COACH_MODES', () => {
 });
 
 describe('clarificationsFrom', () => {
-  it('drops the automatic opener and the coach turns', () => {
+  it('preserves the question that gives a short answer its meaning', () => {
+    const out = clarificationsFrom({ bet: [
+      { role: 'user', content: 'Ask me questions about my bet.' },
+      { role: 'assistant', content: 'Will you test with nurses or managers?' },
+      { role: 'user', content: 'Nurses, not managers.' },
+    ] });
+    expect(out.bet?.[0]).toContain('Will you test with nurses or managers?');
+    expect(out.bet?.[0]).toContain('Participant: Nurses, not managers.');
+  });
+
+  it('drops the automatic opener and labels the coach as context, not evidence', () => {
     const out = clarificationsFrom({
       why: [
         { role: 'user', content: 'Ask me questions about my why.' },
@@ -32,7 +42,7 @@ describe('clarificationsFrom', () => {
       ],
       who: [{ role: 'user', content: 'Ask me questions about my person and their pain.' }],
     });
-    expect(out).toEqual({ why: ["It's not about being new."] });
+    expect(out).toEqual({ why: ["Pal asked or said (not evidence): Q1 …\nParticipant: It's not about being new."] });
   });
 
   it('keeps only the latest ten answers, each clamped', () => {

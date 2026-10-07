@@ -2,6 +2,7 @@
 
 import { readCoachStream } from './shared/coachStream';
 import { parseRetryAfter } from './shared/syncPolicy';
+import type { Artifact } from './shared/session';
 import { normaliseCanvas, normaliseDone, type Canvas, type ChatMessage, type CoachStepId } from './shared/canvas';
 import type {
   Clarifications,
@@ -28,6 +29,7 @@ export type CoachBody = {
   failed?: string[];
   /** The participant's own answers in the question chats (`statement`, `assumptions`, `brief` and `review`). */
   clarifications?: Clarifications;
+  artifacts?: Artifact[];
 };
 
 async function errorFrom(response: Response, fallback: string): Promise<string> {

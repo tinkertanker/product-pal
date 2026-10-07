@@ -260,7 +260,7 @@ async function handleJudge(request: Request, env: Env, config: Config, ip: strin
   const { step, canvas, clarifications } = parsed.value;
   try {
     const answers = await askJev(apiKey, buildJudgeRequest(canvas, step, clarifications));
-    return json(interpretJudge(step, answers, stepFingerprint(canvas, step), Date.now()));
+    return json(interpretJudge(step, answers, stepFingerprint(canvas, step, clarifications), Date.now()));
   } catch (error) {
     console.error('[judge] upstream failed:', error instanceof JevError ? error.message : error);
     return json({ error: JUDGE_FAILED }, 502);

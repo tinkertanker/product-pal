@@ -11,7 +11,7 @@ export function buildSyncRequest(input: { code: string; clientId: string; canvas
   const base = canvasForRequest(input.canvas);
   const chats = { ...base.chats };
   // The admin view only reads what the participant said, so the coach's turns stay home.
-  for (const id of STEP_IDS) chats[id] = clampMessages((input.canvas.chats[id] ?? []).filter((m) => m.role === 'user'));
+  for (const id of STEP_IDS) chats[id] = clampMessages((input.canvas.chats[id] ?? []).filter((m) => m.role === 'user').map((m) => ({ role: m.role, content: m.content })));
   return {
     code: input.code,
     clientId: input.clientId,

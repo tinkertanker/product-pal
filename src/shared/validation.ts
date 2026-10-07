@@ -23,6 +23,7 @@ import {
   type SyncRequest,
 } from './contracts';
 import { checksFor } from './judge';
+import { ARTIFACT_LIMIT, readArtifact, type Artifact } from './session';
 
 // The modes live in contracts.ts; re-exported so existing imports keep working.
 export { COACH_MODES };
@@ -53,6 +54,8 @@ export type CoachRequest = {
   messages: ChatMessage[];
   /** The participant's own answers in question chats, per step. Used by statement, assumptions, brief and review. */
   clarifications?: Clarifications;
+  /** Completed Pal outputs, kept separate from participant facts. */
+  artifacts?: Artifact[];
   /** Ids of the checks that failed (`nudge` mode), each one of the step's own. */
   failed?: string[];
 };
@@ -202,9 +205,22 @@ export function validateCoachRequest(body: unknown): ValidationResult {
         return fail(`messages[${i}] must have a role and some text.`);
       }
       if (m.content.length > LIMITS.message) return fail(`messages[${i}] is too long (limit ${LIMITS.message} characters).`);
-      messages.push({ role: m.role, content: m.content });
+      const reference = readArtifact(m.reference);
+      if (m.reference !== undefined && (!reference || m.role !== 'user')) return fail(`messages[${i}].reference is invalid.`);
+      messages.push({ role: m.role, content: m.content, ...(reference ? { reference } : {}) });
     }
   }
+
+  const artifacts: Artifact[] = [];
+  if (body.artifacts !== undefined) {
+    if (!Array.isArray(body.artifacts) || body.artifacts.length > ARTIFACT_LIMIT) return fail('Too many artifacts.');
+    for (const raw of body.artifacts) {
+      const a = readArtifact(raw);
+      if (!a) return fail('Invalid artifact.');
+      artifacts.push(a);
+    }
+  }
+  if (JSON.stringify({ messages, artifacts }).length > 80000) return fail('Conversation context is too large.');
 
   const clarifications = readClarifications(body.clarifications);
   if (!clarifications.ok) return fail(clarifications.error);
@@ -230,6 +246,7 @@ export function validateCoachRequest(body: unknown): ValidationResult {
       step: validStep,
       canvas: canvas.value,
       messages,
+      artifacts,
       clarifications: clarifications.value,
       ...(failed ? { failed } : {}),
     },
@@ -355,7 +372,8 @@ export function validateSyncRequest(body: unknown): Checked<SyncRequest> {
  * messages first and makes sure the list starts with a participant turn.
  */
 export function clampMessages(messages: readonly ChatMessage[]): ChatMessage[] {
-  let out = messages.slice(-LIMITS.messages).map((m) => ({ role: m.role, content: m.content.slice(0, LIMITS.message) }));
+  let out = messages.slice(-LIMITS.messages).map((m) => ({ role: m.role, content: m.content.slice(0, LIMITS.message), ...(m.reference ? { reference: m.reference } : {}) }));
+  while (out.length > 1 && JSON.stringify(out).length > 40000) out = out.slice(1);
   while (out.length > 0 && out[0]?.role !== 'user') out = out.slice(1);
   return out;
 }
