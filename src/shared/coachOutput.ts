@@ -1,7 +1,21 @@
 // Parsing the two coach replies that have a fixed shape. Pure string handling,
 // shared by the Worker (tests, prompts) and the browser (streaming display).
 
+import type { CoachMode } from './contracts';
+import { LIMITS } from './validation';
+import { ARTIFACT_TEXT_LIMIT } from './session';
+
 const FENCE = '```';
+
+/** Reject complete-but-oversized output rather than saving an unexplainable draft. */
+export function outputFits(mode: CoachMode, text: string): boolean {
+  if (text.length > ARTIFACT_TEXT_LIMIT) return false;
+  if (mode === 'brief') {
+    const { fit, rest } = parseFit(text);
+    return rest.trim().length > 0 && rest.length <= LIMITS.document && (fit?.length ?? 0) <= LIMITS.fit;
+  }
+  return text.trim().length > 0 && text.length <= LIMITS.message;
+}
 
 export type ParsedFit = {
   /** Pal's view on whether the parked idea still fits. Null when the reply has no fit block. */

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { agentFileContent, agentFileName } from '../shared/agentFile';
 import { PLATFORM_OPTIONS, wordCount } from '../shared/briefFlow';
 import type { Canvas, Platform, StepId } from '../shared/canvas';
@@ -35,6 +35,7 @@ type Props = {
   checkError: string;
   emptyMessage: string;
   nudge?: NudgeView;
+  contextActions?: ReactNode;
 };
 
 /** The footer link: copies the grilling prompt, then names where it came from. */
@@ -66,7 +67,7 @@ function GrillLink() {
   );
 }
 
-export function BriefStep({ canvas, busy, writing, judgeOn, checking, onBrief, onWrite, onWriteAnyway, gate, onGoToStep, onCheck, onReview, onQuestions, view, checkError, emptyMessage, nudge }: Props) {
+export function BriefStep({ canvas, busy, writing, judgeOn, checking, onBrief, onWrite, onWriteAnyway, gate, onGoToStep, onCheck, onReview, onQuestions, view, checkError, emptyMessage, nudge, contextActions }: Props) {
   const { brief } = canvas;
   const hasText = brief.document.trim().length > 0;
   const fileName = agentFileName(brief.platform);
@@ -167,6 +168,7 @@ export function BriefStep({ canvas, busy, writing, judgeOn, checking, onBrief, o
           />
           <p className="field__help">{wordCount(brief.document).toLocaleString('en-GB')} words</p>
           {!writing && <p className="field__help">Pal drafted First version, Not building and Open questions from your notes. Read those three before you copy.</p>}
+          {!writing && contextActions}
         </div>
       )}
 

@@ -178,7 +178,7 @@ export function checksFor(step: CoachStepId): JudgeCheckDef[] {
 
 const EARLIER_CHARS = 300;
 const CLARIFICATIONS_NOTE =
-  " The participant's own extra answers are in `clarifications`. Anything relevant there counts as part of what they wrote, even if the field itself is thin.";
+  " Prior exchanges are in `clarifications`. Only participant statements count as evidence; Pal's questions or suggestions and participant requests for advice do not. Current fields win over conflicting older answers. Relevant participant statements count even if the field itself is thin.";
 
 export type JudgeState = {
   step: string;

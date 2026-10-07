@@ -13,12 +13,12 @@ import {
   type ChatMessage,
   type StepId,
 } from '../shared/canvas';
-import { parseAssumptions, parseFit } from '../shared/coachOutput';
-import { afterRun, questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
-import { clarificationsFrom, nicknameFor, type CoachMode, type Judgement, type PublicSettings } from '../shared/contracts';
+import { outputFits, parseAssumptions, parseFit } from '../shared/coachOutput';
+import { questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
+import { clarificationsFrom, fingerprint, nicknameFor, type CoachMode, type Judgement, type PublicSettings } from '../shared/contracts';
 import { emptyBoxesMessage, failedCheckIds, judgeView, needsAutoCheck, shouldNudge, canCheck } from '../shared/judgeFlow';
 import { IDG_CREDIT, IDG_URL, STEPS } from '../shared/steps';
-import { canvasForRequest, clampMessages } from '../shared/validation';
+import { canvasForRequest, clampMessages, conversationsForRequest } from '../shared/validation';
 import { clearState, getClientId, loadState, saveState, type SavedState } from '../storage';
 import { BriefStep } from './BriefStep';
 import { CoachPanel, type PanelMode } from './CoachPanel';
@@ -29,26 +29,15 @@ import { MobileProgress, Stepper } from './Stepper';
 import { Sticker } from './Sticker';
 import { CheckBar, StepHeader, StepView } from './StepView';
 import { useSync } from './useSync';
+import { ARTIFACT_TEXT_LIMIT, artifactStale, makeArtifact, newSession, rememberArtifact, type Artifact, type ArtifactKind } from '../shared/session';
 
-/** How a coach run ended; see `afterRun`. */
+/** Only complete responses can be committed to session state. */
 type RunResult = { result: CoachResult | null; cancelled: boolean; superseded: boolean };
 
 type Busy = { kind: CoachMode; step: StepId } | null;
 
 /** A nudge as held in memory: `done` is false while the reply is still arriving. */
 type Nudge = { fingerprint: string; text: string; done: boolean };
-
-const CUT_SHORT = 'Your coach ran out of room before finishing, so the end of this reply is missing. Try again for a full answer.';
-
-/** Shown when a reply hits the length limit. The reply itself is kept. */
-const TRUNCATED: Record<CoachMode, string> = {
-  nudge: CUT_SHORT,
-  questions: 'Your coach ran out of room before finishing. Ask it to carry on.',
-  statement: CUT_SHORT,
-  assumptions: CUT_SHORT,
-  brief: 'Your coach ran out of room before finishing your brief, so the end may be missing. Check the last section, or press Rewrite to try again.',
-  review: CUT_SHORT,
-};
 
 const downloadMarkdown = (canvas: Canvas) => downloadText('product-brief.md', canvasToMarkdown(canvas));
 
@@ -66,8 +55,8 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   );
   const [stepIndex, setStepIndex] = useState(initial.step);
   const [panelModes, setPanelModes] = useState<Partial<Record<StepId, PanelMode>>>({});
-  const [review, setReview] = useState('');
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [session, setSession] = useState(initial.session);
+  const [preview, setPreview] = useState<{ kind: CoachMode; step: StepId; text: string } | null>(null);
   const [gate, setGate] = useState<StepId[] | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<{ step: StepId; message: string } | null>(null);
@@ -105,18 +94,16 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     STEPS.filter((s) => isStepComplete(canvas, s.id, completion)).map((s) => s.id),
   );
 
-  // Autosave, debounced. Only finished nudges are kept.
+  // Save committed state immediately: a reload must not lose a completed reply.
+  // Streaming previews are separate and only finished nudges are kept.
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const saved: SavedState['nudges'] = {};
-      for (const s of STEPS) {
-        const n = nudges[s.id];
-        if (n?.done && n.text) saved[s.id] = { fingerprint: n.fingerprint, text: n.text };
-      }
-      saveState({ canvas, nudges: saved, step: stepIndex });
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [canvas, nudges, stepIndex]);
+    const saved: SavedState['nudges'] = {};
+    for (const s of STEPS) {
+      const n = nudges[s.id];
+      if (n?.done && n.text) saved[s.id] = { fingerprint: n.fingerprint, text: n.text };
+    }
+    saveState({ canvas, nudges: saved, step: stepIndex, session });
+  }, [canvas, nudges, stepIndex, session]);
 
   useEffect(
     () => () => {
@@ -151,10 +138,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   /**
    * Run one coach request. Only one at a time: callers check `abortRef` first,
    * and a run that finds another in progress never starts or cancels it.
-   * Resolves with the reply (null on failure) and how the run ended, so the
-   * caller can ask `afterRun` what to do with what it streamed in.
+   * Streaming text is a preview only. Callers commit a complete reply.
    */
-  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>, onText: (text: string) => void): Promise<RunResult> {
+  async function run(kind: CoachMode, stepId: StepId, body: Omit<CoachBody, 'code' | 'clientId' | 'mode'>): Promise<RunResult> {
     if (abortRef.current) {
       setError({ step: stepId, message: 'Your coach was busy with something else, so that did not go through. Please try again in a moment.' });
       return { result: null, cancelled: false, superseded: true };
@@ -163,11 +149,20 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy({ kind, step: stepId });
+    setPreview({ kind, step: stepId, text: '' });
     setError(null);
     let result: CoachResult | null = null;
     try {
-      result = await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, (t) => gen === generation.current && onText(t), controller.signal);
-      if (result.truncated && gen === generation.current) setError({ step: stepId, message: TRUNCATED[kind] });
+      result = await streamCoach({ ...body, conversations: conversationsForRequest(canvasRef.current.chats, kind === 'questions' ? stepId : undefined), messages: body.messages ? clampMessages(body.messages) : undefined, mode: kind, code, clientId: getClientId() }, (text) => {
+        if (gen === generation.current && abortRef.current === controller) setPreview({ kind, step: stepId, text });
+      }, controller.signal);
+      if (result.truncated && gen === generation.current) {
+        setError({ step: stepId, message: 'Pal could not finish that reply. Your previous work is unchanged. Please try again.' });
+        result = null;
+      } else if (result && !outputFits(kind, result.text) && gen === generation.current) {
+        setError({ step: stepId, message: 'Pal returned an empty or oversized reply. Your previous work is unchanged. Please try again for a shorter answer.' });
+        result = null;
+      }
     } catch (e) {
       if (e instanceof UnauthorisedError) {
         onUnauthorised();
@@ -181,8 +176,20 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     if (abortRef.current === controller) {
       abortRef.current = null;
       setBusy(null);
+      setPreview(null);
     }
     return { result: result && !cancelled ? result : null, cancelled, superseded };
+  }
+
+  function remember(snapshot: Canvas, kind: ArtifactKind, stepId: StepId, text: string) {
+    setSession((s) => rememberArtifact(s, makeArtifact(snapshot, kind, stepId, text)));
+  }
+
+  function explain(artifact: Artifact, question = 'Explain this and how it follows from my notes.') {
+    if (abortRef.current) return;
+    setPanel(id, 'questions');
+    void sendChat(id, [...canvas.chats[id], { role: 'user', content: question, reference: artifact }]);
+    window.setTimeout(() => document.getElementById('chat-input')?.focus(), 0);
   }
 
   // ---- Step checker ------------------------------------------------------
@@ -215,8 +222,10 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       else if (gen === generation.current) setJudgeErrors((all) => ({ ...all, [stepId]: e instanceof Error ? e.message : "The step checker couldn't answer just now. Please try again in a moment." }));
       return null;
     } finally {
-      checksRunning.current.delete(stepId);
-      publish();
+      if (gen === generation.current) {
+        checksRunning.current.delete(stepId);
+        publish();
+      }
     }
   }
 
@@ -240,21 +249,25 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     const controller = new AbortController();
     nudgeAbort.current[stepId] = controller;
     const put = (text: string, finished: boolean) => {
-      if (gen === generation.current) setNudges((n) => ({ ...n, [stepId]: { fingerprint, text, done: finished } }));
+      if (gen === generation.current && nudgeAbort.current[stepId] === controller) setNudges((n) => ({ ...n, [stepId]: { fingerprint, text, done: finished } }));
     };
     put('', false);
     try {
       const result = await streamCoach(
-        { mode: 'nudge', code, clientId: getClientId(), step: stepId, failed: failedCheckIds(judgement), canvas: canvasForRequest(snapshot) },
+        { mode: 'nudge', code, clientId: getClientId(), step: stepId, failed: failedCheckIds(judgement), canvas: canvasForRequest(snapshot), clarifications: clarificationsFrom(snapshot.chats) },
         (text) => put(text, false),
         controller.signal,
       );
+      if (result.truncated || !outputFits('nudge', result.text)) throw new Error('Incomplete or oversized nudge');
       put(result.text, true);
+      if (gen === generation.current && nudgeAbort.current[stepId] === controller) remember(snapshot, 'nudge', stepId, result.text);
     } catch (e) {
       if (e instanceof UnauthorisedError) onUnauthorised();
       // The nudge is a bonus. If it fails, the card's fix lines are still there; a new check can try again.
-      if (gen === generation.current) setNudges((n) => without(n, stepId));
-      if (nudgeStarted.current[stepId] === fingerprint) delete nudgeStarted.current[stepId];
+      if (gen === generation.current && nudgeAbort.current[stepId] === controller) {
+        setNudges((n) => without(n, stepId));
+        if (nudgeStarted.current[stepId] === fingerprint) delete nudgeStarted.current[stepId];
+      }
     } finally {
       if (nudgeAbort.current[stepId] === controller) delete nudgeAbort.current[stepId];
     }
@@ -270,18 +283,17 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   async function sendChat(stepId: StepId, history: ChatMessage[]) {
     if (abortRef.current) return;
     // `history` already ends with the participant's turn.
-    setChat(stepId, () => [...history, { role: 'assistant', content: '' }]);
-    const end = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: clampMessages(history) }, (t) =>
-      setChat(stepId, (m) => [...m.slice(0, -1), { role: 'assistant', content: t }]),
-    );
-    if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') {
-      // Drop the coach's turn, even if part of it arrived, so it isn't saved or sent back.
-      // If only the automatic opener is left, clear it so "Ask me questions" starts afresh.
-      setChat(stepId, (m) => {
-        const rest = m[m.length - 1]?.role === 'assistant' ? m.slice(0, -1) : m;
-        return rest.length === 1 && rest[0] && isQuestionsOpener(rest[0].content) ? [] : rest;
-      });
-    }
+    setChat(stepId, () => history);
+    let budget = 30000;
+    const artifacts = [...session.artifacts].reverse().filter((a) => {
+      if (a.kind === 'brief' || a.kind === 'statement' || a.text.length > budget) return false;
+      budget -= a.text.length;
+      return true;
+    });
+    const end = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: history, clarifications: clarificationsFrom(canvas.chats), artifacts });
+    if (end.cancelled || end.superseded) return;
+    if (end.result?.text.trim()) setChat(stepId, () => [...history, { role: 'assistant', content: end.result!.text }]);
+    else if (history.length === 1 && isQuestionsOpener(history[0]!.content)) setChat(stepId, () => []);
   }
 
   function askQuestions() {
@@ -305,12 +317,15 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   async function draftStatement() {
     if (abortRef.current) return;
     const previous = canvas.why.statement;
+    const snapshot = canvas;
     const request = canvasForRequest(setField(canvas, 'why', 'statement', ''));
     const go = async () => {
       if (abortRef.current) return;
-      update((c) => setField(c, 'why', 'statement', ''));
-      const end = await run('statement', 'why', { canvas: request, clarifications: clarificationsFrom(canvas.chats) }, (t) => update((c) => setField(c, 'why', 'statement', t)));
-      if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') update((c) => setField(c, 'why', 'statement', previous));
+      const end = await run('statement', 'why', { canvas: request, clarifications: clarificationsFrom(snapshot.chats) });
+      if (!end.cancelled && !end.superseded && end.result?.text.trim()) {
+        update((c) => setField(c, 'why', 'statement', end.result!.text));
+        remember(snapshot, 'statement', 'why', end.result.text);
+      }
     };
     if (previous.trim()) {
       setConfirm({
@@ -327,9 +342,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   // ---- Suggest three -----------------------------------------------------
   async function suggestAssumptions() {
     if (abortRef.current) return;
-    setSuggestions([]);
-    const end = await run('assumptions', 'bet', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, (t) => setSuggestions(parseAssumptions(t)));
-    if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') setSuggestions([]);
+    const snapshot = canvas;
+    const end = await run('assumptions', 'bet', { canvas: canvasForRequest(snapshot), clarifications: clarificationsFrom(snapshot.chats) });
+    if (!end.cancelled && !end.superseded && end.result?.text.trim()) remember(snapshot, 'assumptions', 'bet', end.result.text);
   }
 
   function pickSuggestion(text: string) {
@@ -346,17 +361,14 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     const latest = canvasRef.current;
     const write = async () => {
       if (abortRef.current) return;
-      const previous = { document: latest.brief.document, fit: latest.brief.fit };
       setPanelModes((p) => ({ ...p, brief: undefined }));
-      setReview('');
-      update((c) => ({ ...c, brief: { ...c.brief, document: '', fit: '' } }));
       const request = canvasForRequest({ ...latest, brief: { ...latest.brief, document: '', fit: '' } });
-      const end = await run('brief', 'brief', { canvas: request, clarifications: clarificationsFrom(latest.chats) }, (t) => {
-        const { fit, rest } = parseFit(t);
+      const end = await run('brief', 'brief', { canvas: request, clarifications: clarificationsFrom(latest.chats) });
+      if (!end.cancelled && !end.superseded && end.result?.text.trim()) {
+        const { fit, rest } = parseFit(end.result.text);
         update((c) => ({ ...c, brief: { ...c.brief, fit: fit ?? '', document: rest } }));
-      });
-      // On failure, put back the brief they had, edits included.
-      if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') update((c) => ({ ...c, brief: { ...c.brief, ...previous } }));
+        remember(latest, 'brief', 'brief', end.result.text);
+      }
     };
     if (latest.brief.document.trim()) {
       setConfirm({
@@ -413,9 +425,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   async function reviewBrief() {
     if (abortRef.current) return;
     setPanel('brief', 'review');
-    setReview('');
-    const end = await run('review', 'brief', { canvas: canvasForRequest(canvas), clarifications: clarificationsFrom(canvas.chats) }, setReview);
-    if (afterRun({ text: end.result?.text ?? null, cancelled: end.cancelled, superseded: end.superseded }) === 'restore') setReview('');
+    const snapshot = canvas;
+    const end = await run('review', 'brief', { canvas: canvasForRequest(snapshot), clarifications: clarificationsFrom(snapshot.chats) });
+    if (!end.cancelled && !end.superseded && end.result?.text.trim()) remember(snapshot, 'review', 'brief', end.result.text);
   }
 
   // ---- Start over --------------------------------------------------------
@@ -438,10 +450,10 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
         setTried(new Set());
         clearState();
         setCanvas(stampMeta(emptyCanvas(), Date.now()));
+        setSession(newSession());
+        setPreview(null);
         setNudges({});
         setPanelModes({});
-        setReview('');
-        setSuggestions([]);
         setGate(null);
         setError(null);
         goTo(0);
@@ -450,7 +462,18 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   }
 
   // ---- What this screen shows --------------------------------------------
-  const chat = canvas.chats[id];
+  const output = (kind: ArtifactKind, stepId = id) => session.artifacts.find((a) => a.kind === kind && a.step === stepId);
+  const assumptions = output('assumptions', 'bet');
+  const reviewArtifact = output('review', 'brief');
+  const review = preview?.kind === 'review' ? preview.text : reviewArtifact?.text ?? '';
+  const suggestions = parseAssumptions(preview?.kind === 'assumptions' ? preview.text : assumptions?.text ?? '');
+  let displayCanvas = canvas;
+  if (preview?.kind === 'statement') displayCanvas = setField(canvas, 'why', 'statement', preview.text);
+  if (preview?.kind === 'brief') {
+    const { fit, rest } = parseFit(preview.text);
+    displayCanvas = { ...canvas, brief: { ...canvas.brief, document: rest, fit: fit ?? '' } };
+  }
+  const chat = preview?.kind === 'questions' && preview.step === id ? [...canvas.chats[id], { role: 'assistant' as const, content: preview.text }] : canvas.chats[id];
   const available: PanelMode[] = [
     ...(chat.length > 0 ? (['questions'] as const) : []),
     ...(id === 'brief' && (review || (busy?.kind === 'review' && busy.step === id)) ? (['review'] as const) : []),
@@ -467,6 +490,17 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   const currentFingerprint = currentJudgement(canvas, id)?.fingerprint;
   const nudge: NudgeView | undefined =
     savedNudge && savedNudge.fingerprint === currentFingerprint ? { text: savedNudge.text, pending: !savedNudge.done } : undefined;
+
+  function outputActions(kind: ArtifactKind, text?: string) {
+    const saved = output(kind);
+    const content = text ?? saved?.text;
+    if (!content?.trim()) return null;
+    return <div className="output-context">
+      {kind !== 'nudge' && saved && artifactStale(canvas, saved) && <p className="field__help" role="status">Notes or chat have changed. This output is still saved; review it before using it.</p>}
+      {content.length > ARTIFACT_TEXT_LIMIT && <p className="field__help">This older output is too long to attach. Shorten it before asking Pal to explain it.</p>}
+      <button type="button" className="link link--small" disabled={busy !== null || content.length > ARTIFACT_TEXT_LIMIT} onClick={() => explain({ ...(saved ?? makeArtifact(canvas, kind, id, content)), id: fingerprint(content), text: content })}>Explain this</button>
+    </div>;
+  }
 
   return (
     <div className="app">
@@ -506,7 +540,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
             <StepView
               key={id}
               step={step}
-              canvas={canvas}
+              canvas={displayCanvas}
               onField={(fieldId, value) => update((c) => setField(c, id, fieldId, value))}
               busy={busy !== null}
               drafting={busy?.kind === 'statement'}
@@ -515,10 +549,13 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
               suggestions={suggestions}
               onSuggest={() => void suggestAssumptions()}
               onPickSuggestion={pickSuggestion}
+              statementActions={outputActions('statement', canvas.why.statement)}
+              suggestionActions={(index) => assumptions && <button type="button" className="link link--small" disabled={busy !== null} onClick={() => explain(assumptions, `Why did you suggest number ${index + 1}?`)}>Explain suggestion {index + 1}</button>}
+              suggestionsNotice={assumptions && artifactStale(canvas, assumptions) && <p className="field__help" role="status">Notes or chat have changed. These suggestions may need another look.</p>}
             >
               {id === 'brief' ? (
                 <BriefStep
-                  canvas={canvas}
+                  canvas={displayCanvas}
                   busy={busy !== null}
                   writing={busy?.kind === 'brief'}
                   judgeOn={judgeOn}
@@ -535,6 +572,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                   checkError={judgeErrors[id] ?? ''}
                   emptyMessage={emptyMessage}
                   nudge={nudge}
+                  contextActions={outputActions('brief', `${canvas.brief.document}\n\nFit note: ${canvas.brief.fit}`)}
                 />
               ) : (
                 <CheckBar
@@ -550,12 +588,14 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                   onQuestions={askQuestions}
                 />
               )}
+              {judgeOn && view.kind === 'result' && !nudge?.pending && outputActions('nudge', `${view.judgement.checks.map((c) => `${c.pass ? 'Passed' : 'Missed'}: ${c.label}${c.fix ? `. ${c.fix}` : ''}`).join('\n')}\n${nudge?.text ?? ''}`)}
             </StepView>
           </div>
 
           {(mode || stepError) && (
             <div className="main__coach">
               <CoachPanel
+                key={`${session.id}:${id}`}
                 mode={mode}
                 available={available}
                 onMode={(m) => setPanel(id, m)}
@@ -566,6 +606,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                 chat={chat}
                 onSendChat={answerQuestion}
                 onRestartChat={restartQuestions}
+                reviewActions={outputActions('review')}
               />
             </div>
           )}

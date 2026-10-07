@@ -4,6 +4,7 @@
 import { parsePublicSettings } from './api';
 import type { PublicSettings } from './shared/contracts';
 import { emptyCanvas, normaliseCanvas, STEP_IDS, type Canvas, type StepId } from './shared/canvas';
+import { ARTIFACT_LIMIT, newSession, readArtifact, type Session } from './shared/session';
 
 const CODE_KEY = 'pt.code';
 const CLIENT_KEY = 'pt.clientId';
@@ -52,11 +53,12 @@ export type SavedState = {
   canvas: Canvas;
   nudges: Partial<Record<StepId, SavedNudge>>;
   step: number;
+  session: Session;
 };
 
 /** Read a saved state from untrusted text (pure; `loadState` supplies the text). */
 export function parseSavedState(raw: string | null): SavedState {
-  const fallback: SavedState = { canvas: emptyCanvas(), nudges: {}, step: 0 };
+  const fallback: SavedState = { canvas: emptyCanvas(), nudges: {}, step: 0, session: newSession() };
   if (!raw) return fallback;
   try {
     const data = JSON.parse(raw) as Record<string, unknown>;
@@ -70,7 +72,11 @@ export function parseSavedState(raw: string | null): SavedState {
     // An old save can be on step 5 or 6 of seven; keep the position inside the five screens.
     const saved = typeof data.step === 'number' && Number.isFinite(data.step) ? Math.floor(data.step) : 0;
     const step = Math.min(Math.max(saved, 0), STEP_IDS.length - 1);
-    return { canvas: normaliseCanvas(data.canvas), nudges, step };
+    const rawSession = data.session as Partial<Session> | undefined;
+    const session = rawSession && typeof rawSession.id === 'string' && rawSession.id.length > 0 && rawSession.id.length <= 100
+      ? { id: rawSession.id, artifacts: Array.isArray(rawSession.artifacts) ? rawSession.artifacts.map(readArtifact).filter((a) => a !== undefined).slice(-ARTIFACT_LIMIT) : [] }
+      : fallback.session;
+    return { canvas: normaliseCanvas(data.canvas), nudges, step, session };
   } catch {
     return fallback;
   }

@@ -3,8 +3,9 @@
 // Five screens: who → why → success → bet → brief. Each fact is typed once and
 // carried forward; the AI assembles the write-up from them.
 
-import { fingerprint, type Judgement } from './contracts';
+import { clarificationsFrom, fingerprint, type Judgement } from './contracts';
 import { STEPS, getStep, type FieldDef } from './steps';
+import { readArtifact, type Artifact } from './session';
 
 export const STEP_IDS = ['who', 'why', 'success', 'bet', 'brief'] as const;
 export type StepId = (typeof STEP_IDS)[number];
@@ -16,7 +17,7 @@ export type CoachStepId = StepId;
 /** The four thinking steps that come before the brief. */
 export const THINKING_STEP_IDS = ['who', 'why', 'success', 'bet'] as const;
 
-export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+export type ChatMessage = { role: 'user' | 'assistant'; content: string; reference?: Artifact };
 
 export type Platform = 'claude-code' | 'codex' | 'cursor' | 'lovable' | 'other';
 export const PLATFORMS: readonly Platform[] = ['claude-code', 'codex', 'cursor', 'lovable', 'other'];
@@ -174,8 +175,9 @@ export function stepText(canvas: Canvas, stepId: StepId): string {
     .join('\n');
 }
 
-export function stepFingerprint(canvas: Canvas, stepId: StepId): string {
-  return fingerprint(stepText(canvas, stepId));
+export function stepFingerprint(canvas: Canvas, stepId: StepId, clarifications = clarificationsFrom(canvas.chats)[stepId] ?? []): string {
+  const earlier = STEPS.slice(0, STEP_IDS.indexOf(stepId)).map((s) => stepText(canvas, s.id));
+  return fingerprint(JSON.stringify([earlier, stepText(canvas, stepId), clarifications]));
 }
 
 /** The judge's verdict for a step, if there is one and the fields haven't changed since. */
@@ -261,7 +263,7 @@ function normaliseChatList(list: unknown): ChatMessage[] {
         ((m as ChatMessage).role === 'user' || (m as ChatMessage).role === 'assistant') &&
         typeof (m as ChatMessage).content === 'string',
     )
-    .map((m) => ({ role: m.role, content: m.content }));
+    .map((m) => ({ role: m.role, content: m.content, ...(readArtifact(m.reference) ? { reference: readArtifact(m.reference) } : {}) }));
 }
 
 function normalisePlatform(value: unknown): Platform {

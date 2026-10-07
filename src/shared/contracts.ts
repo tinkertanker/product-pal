@@ -26,8 +26,10 @@ export type PublicSettings = Settings & {
 // Clarifications: what the participant said while being grilled
 // ---------------------------------------------------------------------------
 
-/** The participant's own grill answers per step. Sent with build, tune and judge requests. */
+/** Prior participant turns with the preceding Pal question labelled as context, not evidence. */
 export type Clarifications = Partial<Record<CoachStepId, string[]>>;
+/** Role-labelled history remains context, including the last Pal answer and exact attachments. */
+export type Conversations = Partial<Record<CoachStepId, ChatMessage[]>>;
 
 /** Matches LIMITS.message in validation.ts (kept here to avoid an import cycle). */
 export const CLARIFICATION_MAX_CHARS = 4000;
@@ -36,17 +38,25 @@ export const CLARIFICATIONS_PER_STEP = 10;
 const COACH_STEPS: readonly CoachStepId[] = ['who', 'why', 'success', 'bet', 'brief'];
 
 /**
- * Each step's participant messages from its grill chat, minus the first one
- * (always the automatic "Grill me on my …" opener). Keeps the latest
- * CLARIFICATIONS_PER_STEP, each clamped. Steps with nothing are left out.
+ * Keep contextual exchanges, excluding automatic openers and Explain-this
+ * requests. The model must distinguish factual answers from requests for advice.
+ * Keeps the latest CLARIFICATIONS_PER_STEP, each clamped.
  */
 export function clarificationsFrom(chats: Partial<Record<StepId, readonly ChatMessage[]>>): Clarifications {
   const out: Clarifications = {};
   for (const id of COACH_STEPS) {
-    const answers = (chats[id] ?? [])
-      .filter((m) => m.role === 'user')
-      .slice(1)
-      .map((m) => m.content.trim().slice(0, CLARIFICATION_MAX_CHARS))
+    const chat = chats[id] ?? [];
+    const answers = chat
+      .flatMap((m, i) => {
+        if (m.role !== 'user' || m.reference || (i === 0 && /^(Ask me questions about my|Grill me on my)/.test(m.content))) return [];
+        const preceding = chat[i - 1];
+        const answer = m.content.trim().slice(0, CLARIFICATION_MAX_CHARS);
+        const prefix = 'Pal asked or said (not evidence): ';
+        const separator = '\nParticipant: ';
+        const room = CLARIFICATION_MAX_CHARS - answer.length - prefix.length - separator.length;
+        const context = preceding?.role === 'assistant' && room > 0 ? `${prefix}${preceding.content.slice(0, Math.min(room, 1500))}${separator}` : '';
+        return [context + answer];
+      })
       .filter((t) => t.length > 0)
       .slice(-CLARIFICATIONS_PER_STEP);
     if (answers.length > 0) out[id] = answers;

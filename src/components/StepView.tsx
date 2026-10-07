@@ -88,11 +88,14 @@ type Props = {
   suggestions: string[];
   onSuggest: () => void;
   onPickSuggestion: (text: string) => void;
+  statementActions?: ReactNode;
+  suggestionActions?: (index: number) => ReactNode;
+  suggestionsNotice?: ReactNode;
   /** What sits under the boxes: the check button and card, or the brief tools. */
   children: ReactNode;
 };
 
-export function StepView({ step, canvas, onField, busy, drafting, onDraft, suggesting, suggestions, onSuggest, onPickSuggestion, children }: Props) {
+export function StepView({ step, canvas, onField, busy, drafting, onDraft, suggesting, suggestions, onSuggest, onPickSuggestion, statementActions, suggestionActions, suggestionsNotice, children }: Props) {
   const [revealed, setRevealed] = useState(0);
   const [triedDraft, setTriedDraft] = useState(false);
   const fields = visibleFields(canvas, step, revealed);
@@ -116,11 +119,7 @@ export function StepView({ step, canvas, onField, busy, drafting, onDraft, sugge
             {drafting ? 'Drafting…' : 'Draft it for me'}
           </button>
         ),
-        below: draftMessage ? (
-          <p className="field__help" role="status">
-            {draftMessage}
-          </p>
-        ) : undefined,
+        below: <>{draftMessage && <p className="field__help" role="status">{draftMessage}</p>}{!drafting && statementActions}</>,
       };
     }
     if (step.id === 'bet' && id === 'assumption') {
@@ -140,10 +139,12 @@ export function StepView({ step, canvas, onField, busy, drafting, onDraft, sugge
                       <button type="button" className="suggest__card" onClick={() => onPickSuggestion(text)} disabled={suggesting}>
                         {text}
                       </button>
+                      {!suggesting && suggestionActions?.(i)}
                     </li>
                   ))}
                 </ul>
                 <p className="field__help">Pick the one that worries you most, or write your own.</p>
+                {!suggesting && suggestionsNotice}
               </>
             )}
           </div>

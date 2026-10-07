@@ -542,7 +542,7 @@ function JudgementRow({ id, canvas }: { id: CoachStepId; canvas: ParticipantDeta
     <details className="drawer__group">
       <summary>
         {step?.number}. {step?.title}: {latest.pass ? 'passed' : 'not yet'}
-        {stale ? ' (they have edited it since)' : ''}
+        {stale ? ' (notes or chat changed since this check)' : ''}
       </summary>
       <ul className="judge__checks">
         {latest.checks.map((c) => (

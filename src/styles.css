@@ -802,6 +802,14 @@ label {
 .grill-intro p {
   margin: 0;
 }
+.output-context { margin: 8px 0; }
+.chat-reference {
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.chat-reference summary { cursor: pointer; font-weight: 600; }
+.chat-reference p { white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .dots {
   display: inline-flex;
   gap: 4px;

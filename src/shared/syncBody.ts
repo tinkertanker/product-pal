@@ -1,6 +1,6 @@
 // Turn the canvas into the body of POST /api/sync. Pure: no IO.
 
-import { STEP_IDS, type Canvas, type StepId } from './canvas';
+import { STEP_IDS, currentJudgement, stepFingerprint, type Canvas, type StepId } from './canvas';
 import type { SyncRequest } from './contracts';
 import { canvasForRequest, clampMessages } from './validation';
 
@@ -11,11 +11,16 @@ export function buildSyncRequest(input: { code: string; clientId: string; canvas
   const base = canvasForRequest(input.canvas);
   const chats = { ...base.chats };
   // The admin view only reads what the participant said, so the coach's turns stay home.
-  for (const id of STEP_IDS) chats[id] = clampMessages((input.canvas.chats[id] ?? []).filter((m) => m.role === 'user'));
+  for (const id of STEP_IDS) chats[id] = clampMessages((input.canvas.chats[id] ?? []).filter((m) => m.role === 'user').map((m) => ({ role: m.role, content: m.content })));
+  const projected = { ...base, chats, judgements: { ...input.canvas.judgements }, meta: input.canvas.meta };
+  for (const id of STEP_IDS) {
+    const judgement = input.canvas.judgements[id];
+    if (judgement) projected.judgements[id] = { ...judgement, fingerprint: currentJudgement(input.canvas, id) ? stepFingerprint(projected, id) : `stale:${judgement.fingerprint}` };
+  }
   return {
     code: input.code,
     clientId: input.clientId,
-    canvas: { ...base, chats, judgements: input.canvas.judgements, meta: input.canvas.meta },
+    canvas: projected,
     done: input.done,
   };
 }

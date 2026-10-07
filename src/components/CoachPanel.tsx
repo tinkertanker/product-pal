@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { isQuestionsOpener } from '../shared/briefFlow';
 import { parseSuggestion } from '../shared/suggestion';
 import type { ChatMessage } from '../shared/canvas';
 import { CopyButton } from './CopyButton';
 import { Markdown } from './Markdown';
 import { Sticker } from './Sticker';
+import { artifactLabel } from '../shared/session';
 
 export type PanelMode = 'questions' | 'review';
 
@@ -21,13 +22,14 @@ type Props = {
   chat: ChatMessage[];
   onSendChat: (text: string) => void;
   onRestartChat: () => void;
+  reviewActions?: ReactNode;
 };
 
-const TAB_LABEL: Record<PanelMode, string> = { questions: 'Questions', review: 'Review' };
+const TAB_LABEL: Record<PanelMode, string> = { questions: 'Chat', review: 'Review' };
 
 const THINKING_TEXT = {
   review: 'Your coach is reading your brief…',
-  questions: 'Your coach is thinking of a question…',
+  questions: 'Pal is thinking…',
 } as const;
 
 function Thinking({ kind }: { kind: keyof typeof THINKING_TEXT }) {
@@ -96,7 +98,7 @@ function QuestionChat({ chat, busy, locked, onSend, onRestart }: { chat: ChatMes
     <div className="chat">
       <div className="grill-intro">
         <Sticker name="intenseglare" size={44} className="sticker--avatar" />
-        <p>I'll ask one question at a time.</p>
+        <p>Ask about your notes or anything Pal suggested. Or let me coach you, one question at a time.</p>
       </div>
       {shown.map((m, i) =>
         m.role === 'assistant' ? (
@@ -107,6 +109,7 @@ function QuestionChat({ chat, busy, locked, onSend, onRestart }: { chat: ChatMes
           ) : null
         ) : (
           <div key={i} className="bubble bubble--you">
+            {m.reference && <details className="chat-reference"><summary>{artifactLabel(m.reference)}</summary><p>{m.reference.text}</p></details>}
             <p>{m.content}</p>
           </div>
         ),
@@ -115,13 +118,13 @@ function QuestionChat({ chat, busy, locked, onSend, onRestart }: { chat: ChatMes
       <div ref={endRef} />
       <form className="chat__form" onSubmit={submit}>
         <label htmlFor="chat-input" className="sr-only">
-          Your answer
+          Your message to Pal
         </label>
         <textarea
           id="chat-input"
           rows={3}
           value={draft}
-          placeholder="Type your answer here. Press Cmd/Ctrl+Enter to send."
+          placeholder="Ask a question or reply. Cmd/Ctrl+Enter to send."
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(e);
@@ -155,7 +158,7 @@ export function CoachPanel(props: Props) {
   return (
     <aside className="coach" aria-label="Coach" aria-live="polite" aria-busy={busy} ref={ref}>
       <div className="coach__head">
-        <h3>Your coach</h3>
+        <h3>Chat with Pal</h3>
         {available.length > 1 && (
           <div className="tabs" role="group" aria-label="Coach mode">
             {available.map((m) => (
@@ -173,7 +176,7 @@ export function CoachPanel(props: Props) {
           <p>{error}</p>
         </div>
       )}
-      {mode === 'review' && <ReviewReply text={reviewText} busy={busy} />}
+      {mode === 'review' && <><ReviewReply text={reviewText} busy={busy} />{!busy && props.reviewActions}</>}
       {mode === 'questions' && <QuestionChat chat={chat} busy={busy} locked={locked} onSend={onSendChat} onRestart={onRestartChat} />}
     </aside>
   );
