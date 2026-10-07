@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { parseAssumptions, parseFit } from './coachOutput';
+import { outputFits, parseAssumptions, parseFit } from './coachOutput';
+
+describe('completed output limits', () => {
+  it('accepts exact field boundaries and rejects oversize or empty outputs', () => {
+    expect(outputFits('statement', 's'.repeat(4000))).toBe(true);
+    expect(outputFits('statement', 's'.repeat(4001))).toBe(false);
+    expect(outputFits('brief', 'b'.repeat(12000))).toBe(true);
+    expect(outputFits('brief', 'b'.repeat(12001))).toBe(false);
+    expect(outputFits('brief', `\`\`\`fit\n${'f'.repeat(1000)}\n\`\`\`\n${'b'.repeat(12000)}`)).toBe(true);
+    expect(outputFits('brief', `\`\`\`fit\n${'f'.repeat(1001)}\n\`\`\`\nBrief`)).toBe(false);
+    expect(outputFits('brief', ' '.repeat(14000) + '# Brief')).toBe(false);
+    expect(outputFits('brief', '```fit\nOnly fit\n```')).toBe(false);
+    expect(outputFits('questions', '   ')).toBe(false);
+  });
+});
 
 describe('parseFit', () => {
   it('splits a fit block from the brief', () => {

@@ -18,6 +18,7 @@ import {
   CLARIFICATIONS_PER_STEP,
   COACH_MODES,
   type Clarifications,
+  type Conversations,
   type CoachMode,
   type JudgeRequest,
   type SyncRequest,
@@ -56,6 +57,7 @@ export type CoachRequest = {
   clarifications?: Clarifications;
   /** Completed Pal outputs, kept separate from participant facts. */
   artifacts?: Artifact[];
+  conversations?: Conversations;
   /** Ids of the checks that failed (`nudge` mode), each one of the step's own. */
   failed?: string[];
 };
@@ -176,6 +178,21 @@ export function readClarificationList(input: unknown, path: string): Read<string
 
 const NEEDS_STEP: readonly CoachMode[] = ['nudge', 'questions'];
 
+function readMessages(input: unknown, path = 'messages'): Read<ChatMessage[]> {
+  if (input === undefined) return { ok: true, value: [] };
+  if (!Array.isArray(input)) return { ok: false, error: `${path} must be a list.` };
+  if (input.length > LIMITS.messages) return { ok: false, error: `Too many ${path} (limit ${LIMITS.messages}).` };
+  const messages: ChatMessage[] = [];
+  for (const [i, m] of input.entries()) {
+    if (!isRecord(m) || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') return { ok: false, error: `${path}[${i}] must have a role and some text.` };
+    if (m.content.length > LIMITS.message) return { ok: false, error: `${path}[${i}] is too long (limit ${LIMITS.message} characters).` };
+    const reference = readArtifact(m.reference);
+    if (m.reference !== undefined && (!reference || m.role !== 'user')) return { ok: false, error: `${path}[${i}].reference is invalid.` };
+    messages.push({ role: m.role, content: m.content, ...(reference ? { reference } : {}) });
+  }
+  return { ok: true, value: messages };
+}
+
 export function validateCoachRequest(body: unknown): ValidationResult {
   if (!isRecord(body)) return fail('The request must be a JSON object.');
 
@@ -196,18 +213,18 @@ export function validateCoachRequest(body: unknown): ValidationResult {
   const canvas = readCanvas(body.canvas);
   if (!canvas.ok) return fail(canvas.error);
 
-  const messages: ChatMessage[] = [];
-  if (body.messages !== undefined) {
-    if (!Array.isArray(body.messages)) return fail('messages must be a list.');
-    if (body.messages.length > LIMITS.messages) return fail(`Too many messages (limit ${LIMITS.messages}).`);
-    for (const [i, m] of body.messages.entries()) {
-      if (!isRecord(m) || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
-        return fail(`messages[${i}] must have a role and some text.`);
-      }
-      if (m.content.length > LIMITS.message) return fail(`messages[${i}] is too long (limit ${LIMITS.message} characters).`);
-      const reference = readArtifact(m.reference);
-      if (m.reference !== undefined && (!reference || m.role !== 'user')) return fail(`messages[${i}].reference is invalid.`);
-      messages.push({ role: m.role, content: m.content, ...(reference ? { reference } : {}) });
+  const history = readMessages(body.messages);
+  if (!history.ok) return fail(history.error);
+  const messages = history.value;
+  let conversations: Conversations | undefined;
+  if (body.conversations !== undefined) {
+    if (!isRecord(body.conversations)) return fail('conversations must be an object.');
+    conversations = {};
+    for (const [stepId, raw] of Object.entries(body.conversations)) {
+      if (!(STEP_IDS as readonly string[]).includes(stepId)) return fail('Unknown conversation step.');
+      const read = readMessages(raw, `conversations.${stepId}`);
+      if (!read.ok) return fail(read.error);
+      conversations[stepId as StepId] = read.value;
     }
   }
 
@@ -221,6 +238,7 @@ export function validateCoachRequest(body: unknown): ValidationResult {
     }
   }
   if (JSON.stringify({ messages, artifacts }).length > 80000) return fail('Conversation context is too large.');
+  if (JSON.stringify(conversations ?? {}).length > 125000) return fail('Cross-step conversation context is too large.');
 
   const clarifications = readClarifications(body.clarifications);
   if (!clarifications.ok) return fail(clarifications.error);
@@ -247,6 +265,7 @@ export function validateCoachRequest(body: unknown): ValidationResult {
       canvas: canvas.value,
       messages,
       artifacts,
+      ...(conversations ? { conversations } : {}),
       clarifications: clarifications.value,
       ...(failed ? { failed } : {}),
     },
@@ -371,11 +390,26 @@ export function validateSyncRequest(body: unknown): Checked<SyncRequest> {
  * Client-side helper: keep a chat inside the server's limits. Drops the oldest
  * messages first and makes sure the list starts with a participant turn.
  */
-export function clampMessages(messages: readonly ChatMessage[]): ChatMessage[] {
-  let out = messages.slice(-LIMITS.messages).map((m) => ({ role: m.role, content: m.content.slice(0, LIMITS.message), ...(m.reference ? { reference: m.reference } : {}) }));
-  while (out.length > 1 && JSON.stringify(out).length > 40000) out = out.slice(1);
-  while (out.length > 0 && out[0]?.role !== 'user') out = out.slice(1);
-  return out;
+export function clampMessages(messages: readonly ChatMessage[], budget = 40000): ChatMessage[] {
+  const all = messages.map((m) => ({ role: m.role, content: m.content.slice(0, LIMITS.message), ...(m.reference ? { reference: m.reference } : {}) }));
+  let start = Math.max(0, all.length - LIMITS.messages);
+  // Carry the reference active at the trimming boundary, not a later reference
+  // that would change the meaning of retained follow-ups.
+  const anchored = (): ChatMessage[] => {
+    const out = all.slice(start);
+    const reference = all.slice(0, start).reverse().find((m) => m.reference)?.reference;
+    return reference ? [{ role: 'user', content: 'Earlier referenced output (historical context):', reference }, ...out] : out;
+  };
+  while (start < all.length) {
+    const out = anchored();
+    if (all[start]?.role === 'user' && out.length <= LIMITS.messages && JSON.stringify(out).length <= budget) break;
+    start++;
+  }
+  return anchored();
+}
+
+export function conversationsForRequest(chats: Canvas['chats']): Conversations {
+  return Object.fromEntries(STEP_IDS.map((step) => [step, clampMessages(chats[step], 24000)]));
 }
 
 /** Client-side helper: what to send as `canvas` (no chats, judgements or meta; within limits). */

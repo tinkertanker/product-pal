@@ -44,7 +44,8 @@ export function artifactFingerprint(canvas: Canvas, kind: ArtifactKind, step: St
 }
 
 export function makeArtifact(canvas: Canvas, kind: ArtifactKind, step: StepId, text: string): Artifact {
-  return { id: crypto.randomUUID(), kind, step, text: text.slice(0, ARTIFACT_TEXT_LIMIT), basedOn: artifactFingerprint(canvas, kind, step) };
+  if (text.length > ARTIFACT_TEXT_LIMIT) throw new Error('Output is too long to attach exactly.');
+  return { id: crypto.randomUUID(), kind, step, text, basedOn: artifactFingerprint(canvas, kind, step) };
 }
 
 export function rememberArtifact(session: Session, artifact: Artifact): Session {

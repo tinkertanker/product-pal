@@ -28,6 +28,8 @@ export type PublicSettings = Settings & {
 
 /** Prior participant turns with the preceding Pal question labelled as context, not evidence. */
 export type Clarifications = Partial<Record<CoachStepId, string[]>>;
+/** Role-labelled history remains context, including the last Pal answer and exact attachments. */
+export type Conversations = Partial<Record<CoachStepId, ChatMessage[]>>;
 
 /** Matches LIMITS.message in validation.ts (kept here to avoid an import cycle). */
 export const CLARIFICATION_MAX_CHARS = 4000;
@@ -48,8 +50,12 @@ export function clarificationsFrom(chats: Partial<Record<StepId, readonly ChatMe
       .flatMap((m, i) => {
         if (m.role !== 'user' || m.reference || (i === 0 && /^(Ask me questions about my|Grill me on my)/.test(m.content))) return [];
         const preceding = chat[i - 1];
-        const context = preceding?.role === 'assistant' ? `Pal asked or said (not evidence): ${preceding.content.slice(0, 1500)}\nParticipant: ` : '';
-        return [(context + m.content.trim()).slice(0, CLARIFICATION_MAX_CHARS)];
+        const answer = m.content.trim().slice(0, CLARIFICATION_MAX_CHARS);
+        const prefix = 'Pal asked or said (not evidence): ';
+        const separator = '\nParticipant: ';
+        const room = CLARIFICATION_MAX_CHARS - answer.length - prefix.length - separator.length;
+        const context = preceding?.role === 'assistant' && room > 0 ? `${prefix}${preceding.content.slice(0, Math.min(room, 1500))}${separator}` : '';
+        return [context + answer];
       })
       .filter((t) => t.length > 0)
       .slice(-CLARIFICATIONS_PER_STEP);

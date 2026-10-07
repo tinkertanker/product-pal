@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCanvas, setField, type ChatMessage } from './canvas';
+import { currentJudgement, emptyCanvas, setField, stepFingerprint, type ChatMessage } from './canvas';
 import { filledCanvas } from './fixtures';
 import { SYNC_MAX_BYTES, buildSyncRequest, serialiseSync } from './syncBody';
 import { LIMITS, validateSyncRequest } from './validation';
+import { makeArtifact } from './session';
 
 const chat = (n: number, size = 10): ChatMessage[] =>
   Array.from({ length: n }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: 'x'.repeat(size) }));
@@ -14,7 +15,7 @@ describe('buildSyncRequest', () => {
     canvas.meta = { joinedAt: 111, firstInputAt: 222 };
     const req = buildSyncRequest({ code: 'M82T7', clientId: 'c1', canvas, done: ['who'] });
     expect(req.canvas.chats.who).toHaveLength(2);
-    expect(req.canvas.judgements.who?.fingerprint).toBe('abc');
+    expect(req.canvas.judgements.who?.fingerprint).toBe('stale:abc');
     expect(req.canvas.meta).toEqual({ joinedAt: 111, firstInputAt: 222 });
     expect(req.done).toEqual(['who']);
     expect(req.clientId).toBe('c1');
@@ -40,6 +41,28 @@ describe('buildSyncRequest', () => {
 });
 
 describe('a built sync request', () => {
+  it.each([false, true])('preserves fresh and stale judgements without sharing Pal text (Explain=%s)', (explain) => {
+    const canvas = filledCanvas();
+    canvas.chats.who = [
+      { role: 'user', content: 'Ask me questions about my users.' },
+      { role: 'assistant', content: 'PRIVATE How long does handover take?' },
+      { role: 'user', content: '22 minutes.' },
+      ...(explain ? [{ role: 'user' as const, content: 'Explain this.', reference: makeArtifact(canvas, 'nudge', 'who', 'PRIVATE exact feedback') }] : []),
+    ];
+    canvas.judgements.who = { step: 'who', pass: true, checks: [], fingerprint: stepFingerprint(canvas, 'who'), at: 5 };
+    for (const stale of [false, true]) {
+      if (stale) canvas.chats.who.push({ role: 'user', content: 'Correction: 45 minutes.' });
+      const request = buildSyncRequest({ code: 'demo', clientId: 'browser', canvas, done: ['who'] });
+      expect(JSON.stringify(request)).not.toContain('PRIVATE');
+      expect(JSON.stringify(request)).not.toContain('reference');
+      const checked = validateSyncRequest(JSON.parse(JSON.stringify(request)));
+      expect(checked.ok).toBe(true);
+      if (!checked.ok) throw new Error(checked.error);
+      expect(Boolean(currentJudgement(canvas, 'who'))).toBe(!stale);
+      expect(Boolean(currentJudgement(checked.value.canvas, 'who'))).toBe(!stale);
+    }
+  });
+
   it('passes the server\'s own validation unchanged', () => {
     const canvas = filledCanvas();
     canvas.chats.why = chat(4);

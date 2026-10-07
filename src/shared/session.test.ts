@@ -1,13 +1,104 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCanvas, normaliseCanvas, setField, stepFingerprint } from './canvas';
+import { emptyCanvas, normaliseCanvas, setField, stepFingerprint, type ChatMessage } from './canvas';
 import { clarificationsFrom } from './contracts';
 import { buildMessages } from './prompts';
 import { artifactStale, makeArtifact, newSession, rememberArtifact } from './session';
 import { buildSyncRequest } from './syncBody';
-import { clampMessages, validateCoachRequest } from './validation';
+import { clampMessages, conversationsForRequest, validateCoachRequest, validateJudgeRequest } from './validation';
 import { parseSavedState } from '../storage';
 
 describe('shared session context', () => {
+  it('retains the last completed recommendation after switching steps', () => {
+    const canvas = emptyCanvas();
+    canvas.chats.who = [
+      { role: 'user', content: 'Should I observe a handover or run a survey?' },
+      { role: 'assistant', content: 'Observe a Friday night handover before choosing a solution.' },
+    ];
+    const checked = validateCoachRequest({ code: 'demo', clientId: 'browser', canvas, mode: 'questions', step: 'why', messages: [{ role: 'user', content: 'Why did you recommend that approach?' }], conversations: conversationsForRequest(canvas.chats) });
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) throw new Error(checked.error);
+    const prompt = buildMessages(checked.value)[0]!.content;
+    expect(prompt).toContain('Participant: Should I observe a handover or run a survey?');
+    expect(prompt).toContain('Pal (not evidence): Observe a Friday night handover');
+  });
+
+  it('retains the original attachment with a factual follow-up after replacement', () => {
+    const canvas = emptyCanvas();
+    const first = makeArtifact(canvas, 'assumptions', 'bet', 'Handwritten notes are legible.');
+    const replacement = makeArtifact(canvas, 'assumptions', 'bet', 'New suggestions.');
+    canvas.chats.bet = [
+      { role: 'user', content: 'Explain suggestion 2.', reference: first },
+      { role: 'assistant', content: 'It tests feasibility. Can you check it cheaply?' },
+      { role: 'user', content: 'Yes, I tested that with five nurses and four could read it.' },
+      { role: 'assistant', content: 'Record the exception before testing further.' },
+    ];
+    const checked = validateCoachRequest({ code: 'demo', clientId: 'browser', canvas, mode: 'questions', step: 'brief', messages: [{ role: 'user', content: 'What did we learn?' }], artifacts: [replacement], conversations: conversationsForRequest(canvas.chats) });
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) throw new Error(checked.error);
+    const prompt = buildMessages(checked.value)[0]!.content;
+    for (const text of ['Handwritten notes are legible.', 'New suggestions.', 'five nurses and four could read it.', 'Record the exception']) expect(prompt).toContain(text);
+    const statement = buildMessages({ ...checked.value, mode: 'statement' })[0]!.content;
+    expect(statement).not.toContain('Handwritten notes are legible.');
+    expect(statement).not.toContain('five nurses');
+    const assumptions = buildMessages({ ...checked.value, mode: 'assumptions' })[0]!.content;
+    expect(assumptions).not.toContain('five nurses');
+  });
+
+  it('budgets participant corrections before preceding Pal context', () => {
+    const canvas = emptyCanvas();
+    const correction = 'Correction: the test failed, not passed.';
+    const answer = 'x'.repeat(3580 - correction.length) + correction;
+    canvas.chats.bet = [{ role: 'assistant', content: 'p'.repeat(1175) }, { role: 'user', content: answer }];
+    const clarifications = clarificationsFrom(canvas.chats);
+    expect(clarifications.bet?.[0]).toHaveLength(4000);
+    expect(clarifications.bet?.[0]).toContain(answer);
+    const brief = validateCoachRequest({ code: 'demo', clientId: 'browser', mode: 'brief', canvas, clarifications });
+    expect(brief.ok).toBe(true);
+    if (!brief.ok) throw new Error(brief.error);
+    expect(buildMessages(brief.value).map((m) => m.content).join('\n')).toContain(correction);
+    const judge = validateJudgeRequest({ code: 'demo', clientId: 'browser', step: 'bet', canvas, clarifications: clarifications.bet });
+    expect(judge.ok && judge.value.clarifications?.[0]).toContain(correction);
+  });
+
+  it('keeps a complete large exchange without charging for its attachment twice', () => {
+    const canvas = emptyCanvas();
+    const reference = makeArtifact(canvas, 'brief', 'brief', 'b'.repeat(13000));
+    const turns: ChatMessage[] = [{ role: 'user', content: 'Explain', reference }, { role: 'assistant', content: 'a'.repeat(3900) }];
+    expect(clampMessages(turns, 24000)).toEqual(turns);
+    const longer: ChatMessage[] = [...turns, ...Array.from({ length: 40 }, (_, i): ChatMessage => ({ role: i % 2 ? 'assistant' : 'user', content: `${i}: ${'c'.repeat(500)}` }))];
+    const bounded = clampMessages(longer, 24000);
+    expect(bounded[0]?.reference).toEqual(reference);
+    expect(bounded.at(-1)).toEqual(longer.at(-1));
+    expect(bounded.at(-2)).toEqual(longer.at(-2));
+    expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(24000);
+    expect(bounded.length).toBeLessThanOrEqual(40);
+  });
+
+  it('does not substitute a newer attachment for a retained older follow-up when pruning', () => {
+    const canvas = emptyCanvas();
+    const old = makeArtifact(canvas, 'assumptions', 'bet', 'Original assumption');
+    const newer = makeArtifact(canvas, 'assumptions', 'bet', 'Replacement assumption');
+    const turns: ChatMessage[] = [
+      { role: 'user', content: 'Explain old', reference: old },
+      { role: 'assistant', content: 'Test this one.' },
+      ...Array.from({ length: 36 }, (_, i): ChatMessage => ({ role: i % 2 ? 'assistant' : 'user', content: `Old follow-up ${i}` })),
+      { role: 'user', content: 'Explain new', reference: newer },
+      { role: 'assistant', content: 'New advice.' },
+      { role: 'user', content: 'Why?' },
+      { role: 'assistant', content: 'Final answer.' },
+    ];
+    const bounded = clampMessages(turns);
+    expect(bounded[0]?.reference).toEqual(old);
+    expect(bounded.find((m) => m.content === 'Explain new')?.reference).toEqual(newer);
+    expect(bounded.at(-1)?.content).toBe('Final answer.');
+    expect(bounded.length).toBeLessThanOrEqual(40);
+  });
+
+  it('rejects oversized exact artifacts instead of silently truncating them', () => {
+    expect(() => makeArtifact(emptyCanvas(), 'brief', 'brief', 'x'.repeat(14001))).toThrow('too long');
+    expect(makeArtifact(emptyCanvas(), 'brief', 'brief', 'x'.repeat(14000)).text).toHaveLength(14000);
+  });
+
   it('keeps an attached version after replacing the suggestions and reloading', () => {
     const canvas = setField(emptyCanvas(), 'who', 'who', 'Night nurses');
     const first = makeArtifact(canvas, 'assumptions', 'bet', '- Nurses want this.\n- Handwritten notes are legible.\n- Time saved matters.');

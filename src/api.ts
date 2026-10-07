@@ -6,6 +6,7 @@ import type { Artifact } from './shared/session';
 import { normaliseCanvas, normaliseDone, type Canvas, type ChatMessage, type CoachStepId } from './shared/canvas';
 import type {
   Clarifications,
+  Conversations,
   CoachMode,
   JudgeRequest,
   Judgement,
@@ -30,6 +31,7 @@ export type CoachBody = {
   /** The participant's own answers in the question chats (`statement`, `assumptions`, `brief` and `review`). */
   clarifications?: Clarifications;
   artifacts?: Artifact[];
+  conversations?: Conversations;
 };
 
 async function errorFrom(response: Response, fallback: string): Promise<string> {

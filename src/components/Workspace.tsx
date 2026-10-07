@@ -13,12 +13,12 @@ import {
   type ChatMessage,
   type StepId,
 } from '../shared/canvas';
-import { parseAssumptions, parseFit } from '../shared/coachOutput';
+import { outputFits, parseAssumptions, parseFit } from '../shared/coachOutput';
 import { questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
 import { clarificationsFrom, fingerprint, nicknameFor, type CoachMode, type Judgement, type PublicSettings } from '../shared/contracts';
 import { emptyBoxesMessage, failedCheckIds, judgeView, needsAutoCheck, shouldNudge, canCheck } from '../shared/judgeFlow';
 import { IDG_CREDIT, IDG_URL, STEPS } from '../shared/steps';
-import { canvasForRequest, clampMessages } from '../shared/validation';
+import { canvasForRequest, clampMessages, conversationsForRequest } from '../shared/validation';
 import { clearState, getClientId, loadState, saveState, type SavedState } from '../storage';
 import { BriefStep } from './BriefStep';
 import { CoachPanel, type PanelMode } from './CoachPanel';
@@ -29,7 +29,7 @@ import { MobileProgress, Stepper } from './Stepper';
 import { Sticker } from './Sticker';
 import { CheckBar, StepHeader, StepView } from './StepView';
 import { useSync } from './useSync';
-import { artifactStale, makeArtifact, newSession, rememberArtifact, type Artifact, type ArtifactKind } from '../shared/session';
+import { ARTIFACT_TEXT_LIMIT, artifactStale, makeArtifact, newSession, rememberArtifact, type Artifact, type ArtifactKind } from '../shared/session';
 
 /** Only complete responses can be committed to session state. */
 type RunResult = { result: CoachResult | null; cancelled: boolean; superseded: boolean };
@@ -153,11 +153,14 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     setError(null);
     let result: CoachResult | null = null;
     try {
-      result = await streamCoach({ ...body, mode: kind, code, clientId: getClientId() }, (text) => {
+      result = await streamCoach({ conversations: conversationsForRequest(canvasRef.current.chats), ...body, mode: kind, code, clientId: getClientId() }, (text) => {
         if (gen === generation.current && abortRef.current === controller) setPreview({ kind, step: stepId, text });
       }, controller.signal);
       if (result.truncated && gen === generation.current) {
         setError({ step: stepId, message: 'Pal could not finish that reply. Your previous work is unchanged. Please try again.' });
+        result = null;
+      } else if (result && !outputFits(kind, result.text) && gen === generation.current) {
+        setError({ step: stepId, message: 'Pal returned an empty or oversized reply. Your previous work is unchanged. Please try again for a shorter answer.' });
         result = null;
       }
     } catch (e) {
@@ -255,7 +258,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
         (text) => put(text, false),
         controller.signal,
       );
-      if (result.truncated) throw new Error('Incomplete nudge');
+      if (result.truncated || !outputFits('nudge', result.text)) throw new Error('Incomplete or oversized nudge');
       put(result.text, true);
       if (gen === generation.current && nudgeAbort.current[stepId] === controller) remember(snapshot, 'nudge', stepId, result.text);
     } catch (e) {
@@ -494,7 +497,8 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     if (!content?.trim()) return null;
     return <div className="output-context">
       {saved && artifactStale(canvas, saved) && <p className="field__help" role="status">Based on earlier notes. Refresh with {kind === 'brief' ? 'Rewrite' : kind === 'review' ? 'Review my brief' : kind === 'nudge' ? 'Check again' : 'Draft it for me'} when ready.</p>}
-      <button type="button" className="link link--small" disabled={busy !== null} onClick={() => explain({ ...(saved ?? makeArtifact(canvas, kind, id, content)), id: fingerprint(content), text: content })}>Explain this</button>
+      {content.length > ARTIFACT_TEXT_LIMIT && <p className="field__help">This older output is too long to attach. Shorten it before asking Pal to explain it.</p>}
+      <button type="button" className="link link--small" disabled={busy !== null || content.length > ARTIFACT_TEXT_LIMIT} onClick={() => explain({ ...(saved ?? makeArtifact(canvas, kind, id, content)), id: fingerprint(content), text: content })}>Explain this</button>
     </div>;
   }
 
