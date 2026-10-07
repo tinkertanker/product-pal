@@ -25,6 +25,7 @@ import {
 } from './contracts';
 import { checksFor } from './judge';
 import { ARTIFACT_LIMIT, readArtifact, type Artifact } from './session';
+import { getStep } from './steps';
 
 // The modes live in contracts.ts; re-exported so existing imports keep working.
 export { COACH_MODES };
@@ -392,24 +393,32 @@ export function validateSyncRequest(body: unknown): Checked<SyncRequest> {
  */
 export function clampMessages(messages: readonly ChatMessage[], budget = 40000): ChatMessage[] {
   const all = messages.map((m) => ({ role: m.role, content: m.content.slice(0, LIMITS.message), ...(m.reference ? { reference: m.reference } : {}) }));
+  const latestUser = all.map((m) => m.role).lastIndexOf('user');
+  if (latestUser < 0) return [];
   let start = Math.max(0, all.length - LIMITS.messages);
   // Carry the reference active at the trimming boundary, not a later reference
   // that would change the meaning of retained follow-ups.
   const anchored = (): ChatMessage[] => {
     const out = all.slice(start);
-    const reference = all.slice(0, start).reverse().find((m) => m.reference)?.reference;
+    const reference = out[0]?.reference ? undefined : all.slice(0, start).reverse().find((m) => m.reference)?.reference;
     return reference ? [{ role: 'user', content: 'Earlier referenced output (historical context):', reference }, ...out] : out;
   };
-  while (start < all.length) {
+  while (start <= latestUser) {
     const out = anchored();
-    if (all[start]?.role === 'user' && out.length <= LIMITS.messages && JSON.stringify(out).length <= budget) break;
+    if (all[start]?.role === 'user' && out.length <= LIMITS.messages && JSON.stringify(out).length <= budget) return out;
     start++;
   }
-  return anchored();
+  throw new Error('This chat is too large to send without losing its exact reference. Choose Start again, then ask with a shorter excerpt. Your notes and drafts are unchanged.');
 }
 
-export function conversationsForRequest(chats: Canvas['chats']): Conversations {
-  return Object.fromEntries(STEP_IDS.map((step) => [step, clampMessages(chats[step], 24000)]));
+export function conversationsForRequest(chats: Canvas['chats'], currentChat?: StepId): Conversations {
+  return Object.fromEntries(STEP_IDS.filter((step) => step !== currentChat).map((step) => {
+    try {
+      return [step, clampMessages(chats[step], 24000)];
+    } catch {
+      throw new Error(`The “${getStep(step).title}” chat is too large to include without losing its exact reference. Open that step and choose Start again, then use a shorter excerpt. Your notes and drafts are unchanged.`);
+    }
+  }));
 }
 
 /** Client-side helper: what to send as `canvas` (no chats, judgements or meta; within limits). */

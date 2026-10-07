@@ -153,7 +153,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     setError(null);
     let result: CoachResult | null = null;
     try {
-      result = await streamCoach({ conversations: conversationsForRequest(canvasRef.current.chats), ...body, mode: kind, code, clientId: getClientId() }, (text) => {
+      result = await streamCoach({ ...body, conversations: conversationsForRequest(canvasRef.current.chats, kind === 'questions' ? stepId : undefined), messages: body.messages ? clampMessages(body.messages) : undefined, mode: kind, code, clientId: getClientId() }, (text) => {
         if (gen === generation.current && abortRef.current === controller) setPreview({ kind, step: stepId, text });
       }, controller.signal);
       if (result.truncated && gen === generation.current) {
@@ -290,7 +290,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       budget -= a.text.length;
       return true;
     });
-    const end = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: clampMessages(history), clarifications: clarificationsFrom(canvas.chats), artifacts });
+    const end = await run('questions', stepId, { step: stepId, canvas: canvasForRequest(canvas), messages: history, clarifications: clarificationsFrom(canvas.chats), artifacts });
     if (end.cancelled || end.superseded) return;
     if (end.result?.text.trim()) setChat(stepId, () => [...history, { role: 'assistant', content: end.result!.text }]);
     else if (history.length === 1 && isQuestionsOpener(history[0]!.content)) setChat(stepId, () => []);
@@ -496,7 +496,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     const content = text ?? saved?.text;
     if (!content?.trim()) return null;
     return <div className="output-context">
-      {saved && artifactStale(canvas, saved) && <p className="field__help" role="status">Based on earlier notes. Refresh with {kind === 'brief' ? 'Rewrite' : kind === 'review' ? 'Review my brief' : kind === 'nudge' ? 'Check again' : 'Draft it for me'} when ready.</p>}
+      {kind !== 'nudge' && saved && artifactStale(canvas, saved) && <p className="field__help" role="status">Notes or chat have changed. This output is still saved; review it before using it.</p>}
       {content.length > ARTIFACT_TEXT_LIMIT && <p className="field__help">This older output is too long to attach. Shorten it before asking Pal to explain it.</p>}
       <button type="button" className="link link--small" disabled={busy !== null || content.length > ARTIFACT_TEXT_LIMIT} onClick={() => explain({ ...(saved ?? makeArtifact(canvas, kind, id, content)), id: fingerprint(content), text: content })}>Explain this</button>
     </div>;
@@ -551,7 +551,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
               onPickSuggestion={pickSuggestion}
               statementActions={outputActions('statement', canvas.why.statement)}
               suggestionActions={(index) => assumptions && <button type="button" className="link link--small" disabled={busy !== null} onClick={() => explain(assumptions, `Why did you suggest number ${index + 1}?`)}>Explain suggestion {index + 1}</button>}
-              suggestionsNotice={assumptions && artifactStale(canvas, assumptions) && <p className="field__help" role="status">Based on earlier notes. Use Suggest three to refresh.</p>}
+              suggestionsNotice={assumptions && artifactStale(canvas, assumptions) && <p className="field__help" role="status">Notes or chat have changed. These suggestions may need another look.</p>}
             >
               {id === 'brief' ? (
                 <BriefStep

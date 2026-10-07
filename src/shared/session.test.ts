@@ -119,6 +119,37 @@ describe('shared session context', () => {
     expect(bounded.length).toBeLessThanOrEqual(40);
   });
 
+  it('keeps the latest complete exchange when a new large reference replaces the old one', () => {
+    const canvas = emptyCanvas();
+    const old = makeArtifact(canvas, 'brief', 'brief', 'a'.repeat(12000));
+    const newer = makeArtifact(canvas, 'brief', 'brief', 'b'.repeat(12000));
+    const turns: ChatMessage[] = [
+      { role: 'user', content: 'Explain original.', reference: old },
+      { role: 'assistant', content: 'Original advice.' },
+      { role: 'user', content: 'Explain replacement.', reference: newer },
+      { role: 'assistant', content: 'Latest recommendation.' },
+    ];
+    expect(clampMessages(turns, 24000)).toEqual(turns.slice(2));
+  });
+
+  it('reports an unfit exact reference rather than silently losing the latest exchange', () => {
+    const canvas = emptyCanvas();
+    const reference = makeArtifact(canvas, 'brief', 'brief', '# Brief\n' + '\\'.repeat(11992));
+    const turns: ChatMessage[] = [
+      { role: 'user', content: 'Explain.', reference },
+      { role: 'assistant', content: 'Test it.' },
+      { role: 'user', content: 'We tested with five nurses and it failed.' },
+      { role: 'assistant', content: 'Do not proceed.' },
+    ];
+    const before = JSON.stringify(turns);
+    expect(() => clampMessages(turns, 24000)).toThrow('too large');
+    expect(JSON.stringify(turns)).toBe(before);
+    expect(clampMessages(turns, 40000)).toEqual(turns);
+    canvas.chats.brief = turns;
+    expect(() => conversationsForRequest(canvas.chats)).toThrow('brief');
+    expect(conversationsForRequest(canvas.chats, 'brief').brief).toBeUndefined();
+  });
+
   it('rejects oversized exact artifacts instead of silently truncating them', () => {
     expect(() => makeArtifact(emptyCanvas(), 'brief', 'brief', 'x'.repeat(14001))).toThrow('too long');
     expect(makeArtifact(emptyCanvas(), 'brief', 'brief', 'x'.repeat(14000)).text).toHaveLength(14000);

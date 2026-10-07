@@ -54,7 +54,7 @@ export function JudgeCard({ view, error, onCheck, stepId, nudge }: Props) {
       )}
       {view.kind === 'stale' && (
         <div className="judge judge--stale">
-          <p className="judge__headline">You've changed this since it was checked.</p>
+          <p className="judge__headline">Notes or chat, here or in an earlier step, have changed since this check.</p>
           <button type="button" className="btn btn--small" onClick={onCheck}>
             Check again
           </button>
