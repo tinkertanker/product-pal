@@ -44,6 +44,31 @@ describe('shared session context', () => {
     expect(assumptions).not.toContain('five nurses');
   });
 
+  it.each(['statement', 'assumptions'] as const)('keeps %s drafting free of output explanations even on earlier steps', (mode) => {
+    const canvas = emptyCanvas();
+    const reference = makeArtifact(canvas, mode === 'statement' ? 'statement' : 'brief', 'why', 'PREVIOUS_DRAFT_MARKER');
+    canvas.chats.why = [
+      { role: 'user', content: 'Ask me questions about my why.' },
+      { role: 'assistant', content: 'Which shift has the delay?' },
+      { role: 'user', content: 'The night shift.' },
+      { role: 'user', content: 'Explain this.', reference },
+      { role: 'assistant', content: 'PREVIOUS_DRAFT_MARKER describes the cause.' },
+      { role: 'user', content: 'Actually, the ward manager confirmed the delay is 22 minutes.' },
+      { role: 'assistant', content: 'Then revise PREVIOUS_DRAFT_MARKER.' },
+    ];
+    const checked = validateCoachRequest({ code: 'demo', clientId: 'browser', canvas, mode, conversations: conversationsForRequest(canvas.chats), clarifications: clarificationsFrom(canvas.chats) });
+    expect(checked.ok).toBe(true);
+    if (!checked.ok) throw new Error(checked.error);
+    const prompt = buildMessages(checked.value).map((m) => m.content).join('\n');
+    expect(prompt).not.toContain('PREVIOUS_DRAFT_MARKER');
+    expect(prompt).toContain('Which shift has the delay?');
+    expect(prompt).toContain('The night shift.');
+    expect(prompt).toContain('the ward manager confirmed the delay is 22 minutes.');
+    const chat = buildMessages({ ...checked.value, mode: 'questions', step: 'brief', messages: [{ role: 'user', content: 'Why that draft?' }] }).map((m) => m.content).join('\n');
+    expect(chat).toContain('PREVIOUS_DRAFT_MARKER');
+    expect(chat).toContain('Then revise');
+  });
+
   it('budgets participant corrections before preceding Pal context', () => {
     const canvas = emptyCanvas();
     const correction = 'Correction: the test failed, not passed.';
