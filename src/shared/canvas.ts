@@ -4,6 +4,15 @@
 // carried forward; the AI assembles the write-up from them.
 
 import { clarificationsFrom, fingerprint, type Judgement } from './contracts';
+import {
+  DIRECTION_OPTIONS,
+  FONT_OPTIONS,
+  PALETTE_OPTIONS,
+  choiceLabel,
+  emptyDesign,
+  hasLookChoices,
+  type Design,
+} from './design';
 import { STEPS, getStep, type FieldDef } from './steps';
 import { readArtifact, type Artifact } from './session';
 
@@ -22,11 +31,14 @@ export type ChatMessage = { role: 'user' | 'assistant'; content: string; referen
 export type Platform = 'claude-code' | 'codex' | 'cursor' | 'lovable' | 'other';
 export const PLATFORMS: readonly Platform[] = ['claude-code', 'codex', 'cursor', 'lovable', 'other'];
 
+export type { Design };
+
 export type Canvas = {
   who: { who: string; pain: string; evidence: string; parkedIdea: string };
   why: { whys: string[]; consequence: string; statement: string };
   success: { metric: string; today: string; target: string; guardrail: string };
   bet: { assumption: string; test: string; passMark: string };
+  design: Design;
   brief: {
     firstTwoMinutes: string;
     unhappyPath: string;
@@ -61,6 +73,7 @@ export function emptyCanvas(): Canvas {
     why: { whys: Array.from({ length: WHY_COUNT }, () => ''), consequence: '', statement: '' },
     success: { metric: '', today: '', target: '', guardrail: '' },
     bet: { assumption: '', test: '', passMark: '' },
+    design: emptyDesign(),
     brief: {
       firstTwoMinutes: '',
       unhappyPath: '',
@@ -223,6 +236,7 @@ export function hasDocument(canvas: Canvas): boolean {
  */
 export function isStepComplete(canvas: Canvas, stepId: StepId, mode: CompletionMode = { judge: false }): boolean {
   if (stepId === 'brief') return hasDocument(canvas);
+  if (hasDocument(canvas) && nothingLeftEmpty(canvas, stepId)) return true;
   return isStepInputDone(canvas, stepId, mode);
 }
 
@@ -310,6 +324,7 @@ function upgradeV1(raw: Record<string, unknown>): Canvas {
       guardrail: str(metric.guardrail),
     },
     bet: { assumption: str(assumption.riskiest), test: str(assumption.test), passMark: str(assumption.threshold) },
+    design: base.design,
     brief: {
       ...base.brief,
       firstTwoMinutes: str(experience.firstTwoMinutes),
@@ -346,17 +361,25 @@ export function normaliseCanvas(input: unknown): Canvas {
 
   const whyRaw = obj(raw, 'why');
   const briefRaw = obj(raw, 'brief');
+  const designRaw = obj(raw, 'design');
   const chatsRaw = obj(raw, 'chats');
   const metaRaw = obj(raw, 'meta');
   const chats = emptyChats();
   for (const id of STEP_IDS) chats[id] = normaliseChatList(chatsRaw[id]);
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const stack = str(designRaw.stack);
 
   return {
     who: copy(base.who, obj(raw, 'who')),
     why: { whys: normaliseWhys(whyRaw.whys), consequence: str(whyRaw.consequence), statement: str(whyRaw.statement) },
     success: copy(base.success, obj(raw, 'success')),
     bet: copy(base.bet, obj(raw, 'bet')),
+    design: {
+      palette: str(designRaw.palette),
+      font: str(designRaw.font),
+      direction: str(designRaw.direction),
+      stack: stack || base.design.stack,
+    },
     brief: {
       firstTwoMinutes: str(briefRaw.firstTwoMinutes),
       unhappyPath: str(briefRaw.unhappyPath),
@@ -454,6 +477,18 @@ export function canvasToMarkdown(canvas: Canvas): string {
       lines.push(`**${field.exportLabel ?? field.label}**`, '', value, '');
     }
     if (!any) lines.push('_Not filled in yet._', '');
+  }
+  const design = canvas.design;
+  const stackChanged = design.stack.trim() !== emptyDesign().stack;
+  if (hasLookChoices(design) || stackChanged) {
+    lines.push('## Look and stack', '');
+    const palette = choiceLabel(PALETTE_OPTIONS, design.palette);
+    const font = choiceLabel(FONT_OPTIONS, design.font);
+    const direction = choiceLabel(DIRECTION_OPTIONS, design.direction);
+    if (palette) lines.push(`**Palette**`, '', palette, '');
+    if (font) lines.push(`**Font**`, '', font, '');
+    if (direction) lines.push(`**Direction**`, '', direction, '');
+    if (stackChanged) lines.push(`**Stack**`, '', design.stack.trim(), '');
   }
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }

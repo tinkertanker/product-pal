@@ -3,9 +3,15 @@ import { joinWorkshop } from '../api';
 import { approxDuration } from '../shared/steps';
 import { Sticker } from './Sticker';
 
-type Props = { notice?: string; showTimings: boolean; onJoined: (code: string) => void };
+type Props = {
+  notice?: string;
+  showTimings: boolean;
+  hasDraft?: boolean;
+  onJoined: (code: string) => void;
+  onClearDevice?: () => void;
+};
 
-export function JoinScreen({ notice, showTimings, onJoined }: Props) {
+export function JoinScreen({ notice, showTimings, hasDraft, onJoined, onClearDevice }: Props) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -77,6 +83,19 @@ export function JoinScreen({ notice, showTimings, onJoined }: Props) {
         </form>
 
         <p className="join__safe">Your facilitator can see what you write. Please use made-up details and keep anything confidential out.</p>
+        <p className="join__safe">
+          Shared laptop? This browser keeps the last person's draft and workshop code until you clear it.
+        </p>
+        {hasDraft && (
+          <p className="notice" role="status">
+            There is already a draft on this device.{' '}
+            {onClearDevice && (
+              <button type="button" className="link" onClick={onClearDevice}>
+                Clear this device
+              </button>
+            )}
+          </p>
+        )}
       </div>
     </main>
   );

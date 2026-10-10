@@ -34,6 +34,7 @@ export function FieldInput({ stepId, canvas, field, value, onChange, readOnly, a
           {field.helper}
         </p>
       )}
+      {field.landsIn && <p className="field__lands">Lands in {field.landsIn}</p>}
       {field.multiline ? (
         <textarea
           id={id}

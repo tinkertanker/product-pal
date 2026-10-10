@@ -39,6 +39,19 @@ describe('isStepComplete', () => {
     expect(completedCount(briefedCanvas())).toBe(5);
     expect(completedCount(emptyCanvas())).toBe(0);
   });
+  it('marks filled thinking steps done once the brief exists, even if a check failed', () => {
+    const briefed = briefedCanvas();
+    const failed = {
+      ...briefed,
+      judgements: {
+        bet: { step: 'bet' as const, pass: false, fingerprint: stepFingerprint(briefed, 'bet'), at: 1, checks: [] },
+      },
+    };
+    expect(isStepComplete(failed, 'bet', { judge: true })).toBe(true);
+    expect(isStepComplete(failed, 'who', { judge: true })).toBe(true);
+    const emptyWho = setField(briefed, 'who', 'who', '');
+    expect(isStepComplete(emptyWho, 'who', { judge: true })).toBe(false);
+  });
   it('needs each required box to have 10 non-space characters when the judge is off', () => {
     const c = setField(filledCanvas(), 'who', 'who', 'a  b  c d');
     expect(isStepComplete(c, 'who')).toBe(false);
@@ -176,6 +189,12 @@ describe('normaliseCanvas', () => {
     expect(c.brief.document).toBe('p');
     expect(c.chats.who).toEqual([{ role: 'user', content: 'hi' }]);
     expect(c.meta).toEqual({ joinedAt: 5, firstInputAt: 0 });
+    expect(c.design.stack).toContain('Python + Flask');
+    expect(c.design.palette).toBe('');
+  });
+  it('keeps look-and-stack choices and fills an empty stack with the class default', () => {
+    const c = normaliseCanvas({ design: { palette: 'indigo', font: 'sans', direction: 'minimal', stack: '' } });
+    expect(c.design).toEqual({ palette: 'indigo', font: 'sans', direction: 'minimal', stack: emptyCanvas().design.stack });
   });
   it('upgrades a canvas saved by the first version', () => {
     const v1 = {

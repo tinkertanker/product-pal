@@ -13,13 +13,14 @@ import {
   type ChatMessage,
   type StepId,
 } from '../shared/canvas';
+import type { Design } from '../shared/design';
 import { outputFits, parseAssumptions, parseFit } from '../shared/coachOutput';
 import { questionsOpener, isQuestionsOpener, stampJoined, stampMeta } from '../shared/briefFlow';
 import { clarificationsFrom, fingerprint, nicknameFor, type CoachMode, type Judgement, type PublicSettings } from '../shared/contracts';
 import { emptyBoxesMessage, failedCheckIds, judgeView, needsAutoCheck, shouldNudge, canCheck } from '../shared/judgeFlow';
-import { IDG_CREDIT, IDG_URL, STEPS } from '../shared/steps';
+import { IDG_CREDIT, IDG_URL, STEPS, stepPosition } from '../shared/steps';
 import { canvasForRequest, clampMessages, conversationsForRequest } from '../shared/validation';
-import { clearState, getClientId, loadState, saveState, type SavedState } from '../storage';
+import { clearDevice, clearState, getClientId, loadState, saveState, type SavedState } from '../storage';
 import { BriefStep } from './BriefStep';
 import { CoachPanel, type PanelMode } from './CoachPanel';
 import { ConfirmDialog, type ConfirmState } from './ConfirmDialog';
@@ -47,7 +48,17 @@ const without = <T,>(record: Partial<Record<StepId, T>>, id: StepId): Partial<Re
   return rest;
 };
 
-export function Workspace({ code, settings, onUnauthorised }: { code: string; settings: PublicSettings; onUnauthorised: () => void }) {
+export function Workspace({
+  code,
+  settings,
+  onUnauthorised,
+  onClearDevice,
+}: {
+  code: string;
+  settings: PublicSettings;
+  onUnauthorised: () => void;
+  onClearDevice: () => void;
+}) {
   const [initial] = useState<SavedState>(loadState);
   const [canvas, setCanvas] = useState<Canvas>(initial.canvas);
   const [nudges, setNudges] = useState<Partial<Record<StepId, Nudge>>>(() =>
@@ -88,6 +99,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   const stepRef = useRef<StepId>(id);
   stepRef.current = id;
   const done = completedCount(canvas, completion);
+  const position = stepPosition(stepIndex);
   useSync(
     code,
     canvas,
@@ -430,33 +442,50 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
     if (!end.cancelled && !end.superseded && end.result?.text.trim()) remember(snapshot, 'review', 'brief', end.result.text);
   }
 
+  function resetLocalWork() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    for (const c of Object.values(nudgeAbort.current)) c.abort();
+    nudgeAbort.current = {};
+    setBusy(null);
+    generation.current += 1;
+    checksRunning.current.clear();
+    nudgeStarted.current = {};
+    setChecking(new Set());
+    setJudgeErrors({});
+    setTried(new Set());
+    setCanvas(stampMeta(emptyCanvas(), Date.now()));
+    setSession(newSession());
+    setPreview(null);
+    setNudges({});
+    setPanelModes({});
+    setGate(null);
+    setError(null);
+    goTo(0);
+  }
+
   // ---- Start over --------------------------------------------------------
   function startOver() {
     setConfirm({
       title: 'Start over?',
-      message: "This clears everything you've written on this device. Your workshop code stays, so you can start again straight away.",
+      message: "This clears everything you've written on this device. Your workshop code stays, so you can start again straight away. On a shared laptop, use Clear this device instead.",
       confirmLabel: 'Yes, clear it',
       onConfirm: () => {
-        abortRef.current?.abort();
-        abortRef.current = null;
-        for (const c of Object.values(nudgeAbort.current)) c.abort();
-        nudgeAbort.current = {};
-        setBusy(null);
-        generation.current += 1;
-        checksRunning.current.clear();
-        nudgeStarted.current = {};
-        setChecking(new Set());
-        setJudgeErrors({});
-        setTried(new Set());
         clearState();
-        setCanvas(stampMeta(emptyCanvas(), Date.now()));
-        setSession(newSession());
-        setPreview(null);
-        setNudges({});
-        setPanelModes({});
-        setGate(null);
-        setError(null);
-        goTo(0);
+        resetLocalWork();
+      },
+    });
+  }
+
+  function clearThisDevice() {
+    setConfirm({
+      title: 'Clear this device?',
+      message: 'This removes the draft, the workshop code and the nickname on this browser. Use it on a shared laptop before you leave.',
+      confirmLabel: 'Yes, clear this device',
+      onConfirm: () => {
+        resetLocalWork();
+        clearDevice();
+        onClearDevice();
       },
     });
   }
@@ -490,6 +519,14 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
   const currentFingerprint = currentJudgement(canvas, id)?.fingerprint;
   const nudge: NudgeView | undefined =
     savedNudge && savedNudge.fingerprint === currentFingerprint ? { text: savedNudge.text, pending: !savedNudge.done } : undefined;
+  const explainKind: ArtifactKind | null =
+    id === 'brief' && (canvas.brief.document.trim().length > 0 || preview?.kind === 'brief')
+      ? 'brief'
+      : id === 'why' && canvas.why.statement.trim().length > 0
+        ? 'statement'
+        : judgeOn && view.kind === 'result'
+          ? 'nudge'
+          : null;
 
   function outputActions(kind: ArtifactKind, text?: string) {
     const saved = output(kind);
@@ -514,8 +551,8 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
             <p className="topbar__nick">You're {nickname}</p>
           </div>
           <div className="topbar__status">
-            <p className="topbar__progress" aria-label={`${done} of ${STEPS.length} steps complete`}>
-              {done} of {STEPS.length}
+            <p className="topbar__progress" aria-label={`Step ${position} of ${STEPS.length}`}>
+              {position} of {STEPS.length}
             </p>
             {done === STEPS.length && <Sticker name="yay" size={34} eager className="sticker--done hide-narrow" />}
           </div>
@@ -525,6 +562,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
             </button>
             <button type="button" className="btn btn--small btn--quiet" onClick={startOver}>
               Start over
+            </button>
+            <button type="button" className="btn btn--small btn--quiet" onClick={clearThisDevice}>
+              Clear this device
             </button>
           </div>
         </div>
@@ -549,7 +589,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
               suggestions={suggestions}
               onSuggest={() => void suggestAssumptions()}
               onPickSuggestion={pickSuggestion}
-              statementActions={outputActions('statement', canvas.why.statement)}
+              statementActions={explainKind === 'statement' ? outputActions('statement', canvas.why.statement) : undefined}
               suggestionActions={(index) => assumptions && <button type="button" className="link link--small" disabled={busy !== null} onClick={() => explain(assumptions, `Why did you suggest number ${index + 1}?`)}>Explain suggestion {index + 1}</button>}
               suggestionsNotice={assumptions && artifactStale(canvas, assumptions) && <p className="field__help" role="status">Notes or chat have changed. These suggestions may need another look.</p>}
             >
@@ -560,7 +600,9 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                   writing={busy?.kind === 'brief'}
                   judgeOn={judgeOn}
                   checking={view.kind === 'checking'}
+                  stepDone={stepDone}
                   onBrief={(patch) => update((c) => ({ ...c, brief: { ...c.brief, ...patch } }))}
+                  onDesign={(patch: Partial<Design>) => update((c) => ({ ...c, design: { ...c.design, ...patch } }))}
                   onWrite={() => void writeBrief()}
                   onWriteAnyway={() => void writeBrief(true)}
                   gate={gate}
@@ -572,7 +614,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                   checkError={judgeErrors[id] ?? ''}
                   emptyMessage={emptyMessage}
                   nudge={nudge}
-                  contextActions={outputActions('brief', `${canvas.brief.document}\n\nFit note: ${canvas.brief.fit}`)}
+                  contextActions={explainKind === 'brief' ? outputActions('brief', `${canvas.brief.document}\n\nFit note: ${canvas.brief.fit}`) : undefined}
                 />
               ) : (
                 <CheckBar
@@ -588,7 +630,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
                   onQuestions={askQuestions}
                 />
               )}
-              {judgeOn && view.kind === 'result' && !nudge?.pending && outputActions('nudge', `${view.judgement.checks.map((c) => `${c.pass ? 'Passed' : 'Missed'}: ${c.label}${c.fix ? `. ${c.fix}` : ''}`).join('\n')}\n${nudge?.text ?? ''}`)}
+              {explainKind === 'nudge' && view.kind === 'result' && !nudge?.pending && outputActions('nudge', `${view.judgement.checks.map((c) => `${c.pass ? 'Passed' : 'Missed'}: ${c.label}${c.fix ? `. ${c.fix}` : ''}`).join('\n')}\n${nudge?.text ?? ''}`)}
             </StepView>
           </div>
 
@@ -625,6 +667,7 @@ export function Workspace({ code, settings, onUnauthorised }: { code: string; se
       </div>
 
       <footer className="footer">
+        <p>This browser keeps your draft. On a shared laptop, use Clear this device when you finish.</p>
         <p>
           Frameworks from Product Thinking 101 by the{' '}
           <a href={IDG_URL} target="_blank" rel="noreferrer" title={IDG_CREDIT}>

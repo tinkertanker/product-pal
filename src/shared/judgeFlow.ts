@@ -26,7 +26,8 @@ export const isCoachStep = (id: StepId): id is CoachStepId => (COACH_STEP_IDS as
 export function stepStatus(canvas: Canvas, id: StepId, mode: CompletionMode, checking = false): StepStatus {
   if (isStepComplete(canvas, id, mode)) return 'done';
   if (mode.judge && checking) return 'checking';
-  if (mode.judge && currentJudgement(canvas, id)) return 'almost';
+  const judgement = currentJudgement(canvas, id);
+  if (mode.judge && judgement && !judgement.pass) return 'almost';
   return nothingLeftEmpty(canvas, id) ? 'filled' : 'todo';
 }
 
@@ -89,12 +90,13 @@ export type JudgeCardContent = {
   lines: string[];
 };
 
-export function judgeCard(j: Judgement): JudgeCardContent {
+export function judgeCard(j: Judgement, stepDone = true): JudgeCardContent {
   const misses = missedChecks(j);
   const lines = misses.map(fixLine);
   if (!j.pass) return { tone: 'fail', headline: 'Nearly there. Fix these, then check again:', lines };
-  if (misses.length === 0) return { tone: 'pass', headline: 'Done. Nice work.', lines: [] };
-  return { tone: 'miss', headline: misses.length === 1 ? 'Done. One thing worth a look:' : 'Done. Things worth a look:', lines };
+  const lead = stepDone ? 'Done' : 'These boxes look good';
+  if (misses.length === 0) return { tone: 'pass', headline: stepDone ? 'Done. Nice work.' : 'These boxes look good.', lines: [] };
+  return { tone: 'miss', headline: misses.length === 1 ? `${lead}. One thing worth a look:` : `${lead}. Things worth a look:`, lines };
 }
 
 // ---------------------------------------------------------------------------

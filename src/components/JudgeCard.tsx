@@ -14,6 +14,8 @@ type Props = {
   stepId: CoachStepId;
   /** The coach's follow-up to a miss, shown under the card. */
   nudge?: NudgeView;
+  /** The step is finished, so a pass may say Done. */
+  stepDone?: boolean;
 };
 
 function Dots() {
@@ -27,7 +29,7 @@ function Dots() {
 }
 
 /** The step checker's answer, shown under the step's buttons. */
-export function JudgeCard({ view, error, onCheck, stepId, nudge }: Props) {
+export function JudgeCard({ view, error, onCheck, stepId, nudge, stepDone = true }: Props) {
   const titleId = `judge-title-${stepId}`;
   const [showChecks, setShowChecks] = useState(false);
 
@@ -42,7 +44,7 @@ export function JudgeCard({ view, error, onCheck, stepId, nudge }: Props) {
     );
   }
 
-  const card = view.kind === 'result' ? judgeCard(view.judgement) : null;
+  const card = view.kind === 'result' ? judgeCard(view.judgement, stepDone) : null;
   if (view.kind === 'none' && !error) return null;
 
   return (

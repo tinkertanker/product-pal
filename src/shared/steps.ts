@@ -32,6 +32,8 @@ export type FieldDef = {
   drafted?: boolean;
   /** False for a box the step checker never looks at (the parked idea). Editing it does not make a check stale. */
   judged?: boolean;
+  /** Where this answer is written in the export, shown under the box. */
+  landsIn?: string;
 };
 
 export type StepDef = {
@@ -71,6 +73,7 @@ export const STEPS: StepDef[] = [
         label: 'Who is this for?',
         helper: "One person or role. 'Users' is too broad.",
         placeholder: 'e.g. New nurses on night shift',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: false,
         required: true,
       },
@@ -79,6 +82,7 @@ export const STEPS: StepDef[] = [
         label: "What's hard for them today?",
         helper: "A moment you've seen. Save any feature for the parked idea box.",
         placeholder: 'e.g. At handover they hunt through three systems to find what changed',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: true,
         required: true,
       },
@@ -87,6 +91,7 @@ export const STEPS: StepDef[] = [
         label: 'How do you know?',
         helper: "Something you saw, heard or counted. 'I haven't checked yet; I'd ask a nurse' is fine too.",
         placeholder: 'e.g. I timed four handovers: about 20 minutes each',
+        landsIn: 'PRODUCT_BRIEF.md · Evidence',
         multiline: true,
         required: true,
       },
@@ -95,6 +100,7 @@ export const STEPS: StepDef[] = [
         label: 'Your idea, parked',
         helper: "Already have a solution in mind? Park it here. We'll check later whether it still fits.",
         placeholder: 'e.g. A summary of what changed since the last shift',
+        landsIn: 'PRODUCT_BRIEF.md · First version',
         multiline: true,
         required: false,
         judged: false,
@@ -118,6 +124,7 @@ export const STEPS: StepDef[] = [
         quote: { from: 'who.pain', template: 'Why does this happen? “{quote}”' },
         exportLabel: 'Why does this happen?',
         placeholder: 'e.g. Notes live in three different systems',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: false,
         required: true,
       },
@@ -127,6 +134,7 @@ export const STEPS: StepDef[] = [
         quote: { from: 'why.whys.0', template: 'And why is that? “{quote}”' },
         exportLabel: 'And why is that? (2)',
         placeholder: 'e.g. Each team writes in the tool it knows',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: false,
         required: true,
       },
@@ -137,6 +145,7 @@ export const STEPS: StepDef[] = [
         exportLabel: 'And why is that? (3)',
         helper: 'You can stop when you reach something your team could change.',
         placeholder: 'e.g. Nobody owns a single handover summary',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: false,
         required: true,
       },
@@ -145,6 +154,7 @@ export const STEPS: StepDef[] = [
         label: 'And why is that?',
         quote: { from: 'why.whys.2', template: 'And why is that? “{quote}”' },
         exportLabel: 'And why is that? (4)',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: false,
         required: false,
         more: true,
@@ -154,6 +164,7 @@ export const STEPS: StepDef[] = [
         label: 'And why is that?',
         quote: { from: 'why.whys.3', template: 'And why is that? “{quote}”' },
         exportLabel: 'And why is that? (5)',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: false,
         required: false,
         more: true,
@@ -162,6 +173,7 @@ export const STEPS: StepDef[] = [
         id: 'consequence',
         label: 'If nothing changes, what happens?',
         placeholder: 'e.g. Medication rounds start late and changes get missed',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: true,
         required: true,
       },
@@ -171,6 +183,7 @@ export const STEPS: StepDef[] = [
         helper: 'Pal can draft this from your answers. Then make it yours.',
         placeholder:
           'e.g. New night nurses cannot see what changed at handover because notes sit in three systems, so rounds start late.',
+        landsIn: 'PRODUCT_BRIEF.md · Problem',
         multiline: true,
         required: true,
         drafted: true,
@@ -194,6 +207,7 @@ export const STEPS: StepDef[] = [
         label: 'What number changes for them if this works?',
         helper: "Something in their day, such as minutes saved. Logins and other usage numbers don't count.",
         placeholder: 'e.g. Minutes to complete a handover',
+        landsIn: 'PRODUCT_BRIEF.md · Success',
         multiline: false,
         required: true,
       },
@@ -202,6 +216,7 @@ export const STEPS: StepDef[] = [
         label: 'Roughly what is it today?',
         helper: "A guess is fine. Say how you'd check.",
         placeholder: "e.g. About 20 minutes; I'd time three handovers",
+        landsIn: 'PRODUCT_BRIEF.md · Success',
         multiline: false,
         required: true,
       },
@@ -209,6 +224,7 @@ export const STEPS: StepDef[] = [
         id: 'target',
         label: 'Target, and by when',
         placeholder: 'e.g. Under 10 minutes within a month',
+        landsIn: 'PRODUCT_BRIEF.md · Success',
         multiline: false,
         required: false,
         more: true,
@@ -217,6 +233,7 @@ export const STEPS: StepDef[] = [
         id: 'guardrail',
         label: "What mustn't get worse?",
         placeholder: 'e.g. Mistakes in the notes',
+        landsIn: 'PRODUCT_BRIEF.md · Success',
         multiline: false,
         required: false,
         more: true,
@@ -240,6 +257,7 @@ export const STEPS: StepDef[] = [
         label: 'The assumption that would sink it',
         helper: 'Stuck? Ask Pal to suggest three, then pick one or write your own.',
         placeholder: "e.g. Nurses will trust a summary they didn't write",
+        landsIn: 'PRODUCT_BRIEF.md · Riskiest bet',
         multiline: true,
         required: true,
       },
@@ -247,6 +265,7 @@ export const STEPS: StepDef[] = [
         id: 'test',
         label: 'A test you could run in 30 minutes, without code',
         placeholder: 'e.g. Show three nurses a hand-written summary and watch what they do',
+        landsIn: 'PRODUCT_BRIEF.md · Riskiest bet',
         multiline: true,
         required: true,
       },
@@ -254,6 +273,7 @@ export const STEPS: StepDef[] = [
         id: 'passMark',
         label: 'What counts as a pass? Decide now.',
         placeholder: 'e.g. 2 of 3 find the changed patient in under a minute',
+        landsIn: 'PRODUCT_BRIEF.md · Riskiest bet',
         multiline: false,
         required: true,
       },
@@ -274,6 +294,7 @@ export const STEPS: StepDef[] = [
         id: 'firstTwoMinutes',
         label: 'Their first two minutes, step by step',
         placeholder: 'e.g. 1. Opens the ward chat. 2. Sees one card per changed patient. 3. Taps a card to read the note.',
+        landsIn: 'PRODUCT_BRIEF.md · Walkthrough',
         multiline: true,
         required: true,
       },
@@ -281,6 +302,7 @@ export const STEPS: StepDef[] = [
         id: 'unhappyPath',
         label: 'When it goes wrong, what does the user see?',
         placeholder: 'e.g. A note is missing: the card says so and shows who to call',
+        landsIn: 'PRODUCT_BRIEF.md · Walkthrough',
         multiline: true,
         required: true,
       },
@@ -288,6 +310,7 @@ export const STEPS: StepDef[] = [
         id: 'smallestBuild',
         label: "What's the smallest thing you'd build to run your test?",
         placeholder: 'e.g. One page that lists what changed for each patient',
+        landsIn: 'PRODUCT_BRIEF.md · First version',
         multiline: true,
         required: false,
         requiredUnlessParked: true,
@@ -296,6 +319,7 @@ export const STEPS: StepDef[] = [
         id: 'where',
         label: 'Where will they meet it in their day?',
         placeholder: 'e.g. In the ward chat they already use',
+        landsIn: 'PRODUCT_BRIEF.md · Walkthrough',
         multiline: false,
         required: false,
         more: true,
@@ -323,4 +347,10 @@ export function approxDuration(): string {
   if (minutes <= 35) return 'about half an hour';
   if (minutes <= 50) return 'about 45 minutes';
   return 'about an hour';
+}
+
+/** Current screen number (1-based). */
+export function stepPosition(index: number): number {
+  if (!Number.isFinite(index)) return 1;
+  return Math.min(Math.max(Math.floor(index), 0), STEPS.length - 1) + 1;
 }

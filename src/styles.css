@@ -246,6 +246,11 @@ label {
   border-radius: 8px;
   padding: 0.6em 0.8em;
 }
+.notice--progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
 /* ---------- Join ---------- */
 
@@ -368,6 +373,8 @@ label {
 }
 .topbar__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -664,6 +671,13 @@ label {
 .field__help {
   margin: 0;
   font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+.field__lands {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--ink-soft);
 }
 
@@ -1613,6 +1627,53 @@ button.prow.is-selected {
 
 .grill-link p {
   margin: 0;
+}
+.design {
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.design h3 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+.design__set {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 8px;
+}
+.design__set legend {
+  font-size: 0.95rem;
+  padding: 0;
+}
+.design__choices {
+  display: grid;
+  gap: 6px;
+}
+.design__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.design__choice.is-selected {
+  border-color: var(--line-strong);
+  background: var(--accent-soft);
+}
+.design__choice input {
+  margin-top: 0.3em;
+}
+.design__choice .field__help {
+  display: block;
 }
 .copy-fallback {
   flex-basis: 100%;
