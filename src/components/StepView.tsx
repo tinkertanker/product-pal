@@ -242,7 +242,7 @@ export function CheckBar({ stepId, passed, judgeOn, view, error, emptyMessage, n
           {emptyMessage}
         </p>
       )}
-      {judgeOn && <JudgeCard view={view} error={error} onCheck={onCheck} stepId={stepId} nudge={nudge} />}
+      {judgeOn && <JudgeCard view={view} error={error} onCheck={onCheck} stepId={stepId} nudge={nudge} stepDone={passed} />}
     </>
   );
 }
