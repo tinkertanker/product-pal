@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { STEP_IDS } from './canvas';
-import { STEPS, approxDuration, embedUrl, getStep, totalMinutes } from './steps';
+import { STEPS, approxDuration, embedUrl, getStep, stepPosition, totalMinutes } from './steps';
 
 const allText = (): string[] =>
   STEPS.flatMap((s) => [
@@ -9,7 +9,7 @@ const allText = (): string[] =>
     s.intro,
     s.nudge,
     s.moreLabel ?? '',
-    ...s.fields.flatMap((f) => [f.label, f.helper ?? '', f.placeholder ?? '', f.exportLabel ?? '', f.quote?.template ?? '']),
+    ...s.fields.flatMap((f) => [f.label, f.helper ?? '', f.placeholder ?? '', f.exportLabel ?? '', f.quote?.template ?? '', f.landsIn ?? '']),
   ]);
 
 describe('the five steps', () => {
@@ -44,6 +44,26 @@ describe('the bet step', () => {
     const test = getStep('bet').fields.find((f) => f.id === 'test');
     expect(test?.label).toContain('30 minutes');
     expect(test?.label).toContain('without code');
+  });
+});
+
+describe('stepPosition', () => {
+  it('is the current screen number, not how many are done', () => {
+    expect(stepPosition(0)).toBe(1);
+    expect(stepPosition(1)).toBe(2);
+    expect(stepPosition(4)).toBe(5);
+    expect(stepPosition(-2)).toBe(1);
+    expect(stepPosition(99)).toBe(5);
+  });
+});
+
+describe('lands-in labels', () => {
+  it('name a brief section for every box', () => {
+    for (const step of STEPS) {
+      for (const field of step.fields) {
+        expect(field.landsIn).toMatch(/^PRODUCT_BRIEF\.md · /);
+      }
+    }
   });
 });
 

@@ -3,7 +3,7 @@
 
 import { parsePublicSettings } from './api';
 import type { PublicSettings } from './shared/contracts';
-import { emptyCanvas, normaliseCanvas, STEP_IDS, type Canvas, type StepId } from './shared/canvas';
+import { emptyCanvas, hasAnyInput, hasDocument, normaliseCanvas, STEP_IDS, type Canvas, type StepId } from './shared/canvas';
 import { ARTIFACT_LIMIT, newSession, readArtifact, type Session } from './shared/session';
 
 const CODE_KEY = 'pt.code';
@@ -86,6 +86,21 @@ export const loadState = (): SavedState => parseSavedState(read(STATE_KEY));
 
 export const saveState = (state: SavedState): void => write(STATE_KEY, JSON.stringify(state));
 export const clearState = (): void => remove(STATE_KEY);
+
+/** True when this browser already holds a participant draft. */
+export function draftOnDevice(state: SavedState): boolean {
+  return hasAnyInput(state.canvas) || hasDocument(state.canvas);
+}
+
+export const hasLocalDraft = (): boolean => draftOnDevice(loadState());
+
+/** Wipe the workshop code, nickname and draft on this browser. Settings stay. */
+export function clearDevice(): void {
+  remove(CODE_KEY);
+  remove(CLIENT_KEY);
+  remove(STATE_KEY);
+  memoryClientId = '';
+}
 
 // ---------------------------------------------------------------------------
 // Facilitator settings, cached so the first paint matches the last visit.

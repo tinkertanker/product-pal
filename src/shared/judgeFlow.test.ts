@@ -51,6 +51,21 @@ describe('stepStatus', () => {
   it('treats the brief step by its document', () => {
     expect(stepStatus(emptyCanvas(), 'brief', on)).toBe('todo');
   });
+  it('is filled, not almost, when the brief boxes pass but the document is not written', () => {
+    let c = emptyCanvas();
+    c = setField(c, 'brief', 'firstTwoMinutes', '1. Scan. 2. Tap a name. 3. See signed in.');
+    c = setField(c, 'brief', 'unhappyPath', 'Name missing: the page offers Add me.');
+    c = setField(c, 'who', 'parkedIdea', 'A sign-in page');
+    c = {
+      ...c,
+      judgements: { brief: { step: 'brief', pass: true, checks: [], fingerprint: stepFingerprint(c, 'brief'), at: 1 } },
+    };
+    expect(stepStatus(c, 'brief', on)).toBe('filled');
+  });
+  it('is almost only when the current check failed', () => {
+    expect(stepStatus(judged(whoFilled(), false), 'who', on)).toBe('almost');
+    expect(stepStatus(judged(whoFilled(), true), 'who', on)).toBe('done');
+  });
 });
 
 describe('canCheck and needsAutoCheck', () => {
@@ -124,6 +139,13 @@ describe('judgeView', () => {
 describe('judgeCard', () => {
   it('is a short thank-you on a clean pass', () => {
     expect(judgeCard(verdict(true, [check('a', true), check('b', true)]))).toEqual({ tone: 'pass', headline: 'Done. Nice work.', lines: [] });
+  });
+  it('does not say Done when the step is not finished', () => {
+    expect(judgeCard(verdict(true, [check('a', true)]), false)).toEqual({
+      tone: 'pass',
+      headline: 'These boxes look good.',
+      lines: [],
+    });
   });
   it('shows the fix line for a miss on a pass', () => {
     expect(judgeCard(verdict(true, [check('a', true), check('b', false, 'Give a rough number.')]))).toEqual({

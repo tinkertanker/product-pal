@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseSavedState } from './storage';
+import { briefedCanvas, filledCanvas } from './shared/fixtures';
+import { draftOnDevice, parseSavedState } from './storage';
 
 describe('parseSavedState', () => {
   it('starts afresh when there is nothing, or the text is damaged', () => {
@@ -36,5 +37,13 @@ describe('parseSavedState', () => {
       JSON.stringify({ nudges: { who: { fingerprint: 'abc', text: 'Try this' }, why: { fingerprint: 1, text: 'x' }, idea: { fingerprint: 'a', text: 'old' } } }),
     );
     expect(state.nudges).toEqual({ who: { fingerprint: 'abc', text: 'Try this' } });
+  });
+});
+
+describe('draftOnDevice', () => {
+  it('is false for an empty save and true once they have typed or have a brief', () => {
+    expect(draftOnDevice(parseSavedState(null))).toBe(false);
+    expect(draftOnDevice({ ...parseSavedState(null), canvas: filledCanvas() })).toBe(true);
+    expect(draftOnDevice({ ...parseSavedState(null), canvas: briefedCanvas() })).toBe(true);
   });
 });

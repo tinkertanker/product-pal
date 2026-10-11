@@ -146,6 +146,16 @@ export function readCanvas(input: unknown): Read<Canvas> {
     canvas.brief.document = document.value;
   }
 
+  const design = input.design;
+  if (design !== undefined) {
+    if (!isRecord(design)) return { ok: false, error: 'canvas.design must be an object.' };
+    for (const key of ['palette', 'font', 'direction', 'stack'] as const) {
+      const read = readString(design[key], `canvas.design.${key}`, LIMITS.field);
+      if (!read.ok) return read;
+      canvas.design[key] = read.value || canvas.design[key];
+    }
+  }
+
   return { ok: true, value: canvas };
 }
 
@@ -442,5 +452,9 @@ export function canvasForRequest(canvas: Canvas): Canvas {
     fit: canvas.brief.fit.slice(0, LIMITS.fit),
     document: canvas.brief.document.slice(0, LIMITS.document),
   };
+  for (const key of ['palette', 'font', 'direction', 'stack'] as const) {
+    c.design[key] = trimmed(canvas.design?.[key]);
+  }
+  if (!c.design.stack) c.design.stack = emptyCanvas().design.stack;
   return c;
 }

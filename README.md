@@ -8,7 +8,7 @@ The five screens:
 2. **Why.** Ask why up to five times, down to a cause the team could change. Then the cost of doing nothing, and a problem statement (Pal can draft it).
 3. **Success.** One number that moves when their day gets better, and what it is today. A target and a guardrail are optional.
 4. **Riskiest bet.** The assumption that would sink the idea, a test you could run in 30 minutes without code, and a pass mark decided in advance. Pal can suggest three assumptions.
-5. **Your brief.** A walkthrough of the first two minutes, what the user sees when it goes wrong, and the smallest thing to build. Pal then writes the brief.
+5. **Your brief.** A walkthrough of the first two minutes, what the user sees when it goes wrong, and the smallest thing to build. Pal then writes the brief. An optional look-and-stack card (palette, font, direction, and a Python + Flask default) writes `DESIGN.md`. It is not a sixth coaching screen.
 
 What a participant writes is saved in their browser's `localStorage`, and a copy of their progress is sent quietly to the server (under a made-up nickname such as "Coral Otter", with no name or account) so the facilitator can see it on `/admin` and help them along. The join screen tells participants this and asks them to use made-up or anonymised details.
 
@@ -79,8 +79,12 @@ The brief is one page of Markdown, 350 to 450 words, with a title, an "In one li
 They pick the tool they will build with, then:
 
 - **Copy brief** copies the Markdown.
-- **Download** saves only the brief as `PRODUCT_BRIEF.md` for every tool. It does not replace `CLAUDE.md` or `AGENTS.md` (`src/shared/agentFile.ts`).
+- **Download as PRODUCT_BRIEF.md** saves only the brief (`src/shared/agentFile.ts`).
+- **Download the build bundle** saves a zip of `CLAUDE.md` (how to build in passes), `AGENTS.md` (working rules and a verbatim Not building list), `PRODUCT_BRIEF.md`, and `DESIGN.md` (`src/shared/bundle.ts`).
+- **Copy all for your build tool** inlines those four files for a paste into Claude Code, Codex or similar.
 - **Copy kick-off message** copies a separate first message with the working rules. It asks the agent to read `PRODUCT_BRIEF.md`, ask the open questions in one round of up to three questions with recommended answers, then propose a plan for story 1 and wait for approval (`src/shared/kickoff.ts`). For Lovable, paste it after the brief.
+
+Each box names where the answer lands in the brief. On a shared laptop, **Clear this device** wipes the draft, workshop code and nickname. **Start over** keeps the code and empties the boxes.
 
 ## Facilitator page (`/admin`)
 
@@ -110,7 +114,7 @@ Only `delta.content` is streamed to the browser. Reasoning tokens (DeepSeek's `r
 - Every `/api/coach` call re-checks the workshop code. Limits, enforced by [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) bindings declared in `wrangler.jsonc`: 10 requests per minute per browser, 200 per minute per IP, and 60 wrong-code attempts per minute per IP. `/api/judge` adds 30 requests per minute per browser, and `/api/sync` allows 30 per minute per browser and 300 per minute per IP. Counts are approximate and local to each Cloudflare location. If a binding is missing, that limit is skipped.
 - Routes: `GET /api/health`, `POST /api/join`, `POST /api/coach`, `POST /api/judge` (400 if the screen's boxes are empty), `POST /api/sync` (204; bodies over 64 KB get 413; a database write that fails or takes over 3 seconds gets 503 with `Retry-After: 30`), `GET /api/settings` (no code needed; cached in each Worker isolate for 30 seconds, so D1 is read at most once per isolate per 30 seconds, and the cache is refreshed when the facilitator saves; if the database then fails or does not answer within 1.5 seconds it serves the last cached value, or 503 if there is none, so browsers keep the settings they last had instead of falling back to defaults), and the admin routes `GET|DELETE /api/admin/participants`, `GET /api/admin/participants/:clientId` and `GET|PUT /api/admin/settings`.
 - Chat, brief and review receive bounded role-labelled conversations, including completed Pal answers and exact references. Fresh statement and assumption drafts use filtered participant clarifications instead of output-derived explanations. Current saved fields take precedence over older conflicting conversation; Pal's suggestions are not evidence. Statement drafting still excludes later-step context and parked solutions. If an exact reference cannot fit with the latest exchange, Pal shows an error naming the chat to restart rather than silently losing context.
-- Chat sees the current notes, edited brief, fit note and recent completed Pal outputs. **Explain this** attaches an exact output version to a chat turn; attachments survive replacing that output and reloading. The latest outputs and session identity are saved locally, not added to facilitator sync. Start over creates a fresh session. This is same-browser continuity, not cross-device backup.
+- Chat sees the current notes, edited brief, fit note and recent completed Pal outputs. **Explain this** attaches an exact output version to a chat turn (one per screen); attachments survive replacing that output and reloading. The latest outputs and session identity are saved locally, not added to facilitator sync. Start over creates a fresh session. Clear this device also drops the workshop code and nickname. This is same-browser continuity, not cross-device backup.
 - Drafts stream into temporary previews. Only complete replies replace saved work. Outputs based on changed source notes show a refresh notice; existing edits are not automatically overwritten. There is no LLM-generated memory summary or new server database.
 
 ## Deploying
